@@ -31,7 +31,7 @@ if brandfolder_zip and brandfolder_csv and performance_data:
     df_performance['Brandfolder Key'] = df_performance['Creative Name'].apply(lambda x: x.split('_')[-1] if pd.notnull(x) else None)
     
     # Left join the dataframes
-    merged_df = pd.merge(df_performance, df_brandfolder, left_on='Brandfolder Key', right_on='key', how='left')
+    merged_df = pd.merge(df_performance, df_brandfolder, left_on='Brandfolder Key', right_on='key', how='inner')
     
     st.write("### Merged Data Preview")
     st.write(merged_df.head())
