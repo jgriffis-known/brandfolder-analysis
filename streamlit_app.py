@@ -48,3 +48,8 @@ if brandfolder_zip and brandfolder_csv and performance_data:
 
     excel_data = convert_df_to_excel(merged_df)
     st.download_button("Download Merged XLSX", excel_data, "merged_file.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+###steps id like to take next
+##1. dropdown to select KPI - should only be numeric or continuous variables
+#####might require auto-changing any $ variables to numeric first
+##2. analysis boxes should be done by campaign, by audience, and then overall
