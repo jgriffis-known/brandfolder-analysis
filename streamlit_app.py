@@ -2,6 +2,7 @@
 
 import streamlit as st
 import pandas as pd
+import matplotlib.pyplot as plt
 
 # Streamlit app title
 st.title("Brandfolder Creative Analysis")
@@ -49,7 +50,36 @@ if brandfolder_zip and brandfolder_csv and performance_data:
     excel_data = convert_df_to_excel(merged_df)
     st.download_button("Download Merged XLSX", excel_data, "merged_file.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
+
+    # Extract numeric columns from df_performance
+    numeric_columns = df_performance.select_dtypes(include=['number']).columns.tolist()
+
+    # Create a dropdown for selecting a numeric KPI
+    st.write("### Choose a KPI for analysis")
+    selected_kpi = st.selectbox("Select a KPI", numeric_columns)
+
+
+# Extract unique media buy names from the merged DataFrame
+unique_media_buy_names = merged_df['Media Buy Name'].unique()
+
+# Determine best performing creative for each media buy name
+st.write("### Best Performing Creatives by Media Buy Name")
+for media_buy_name in unique_media_buy_names:
+    media_buy_df = merged_df[merged_df['Media Buy Name'] == media_buy_name]
+    
+    if selected_kpi.startswith('CP'):
+        # For KPIs starting with 'CP', use the lowest value
+        best_performing_creative = media_buy_df.loc[media_buy_df[selected_kpi].idxmin()]
+    else:
+        # For other KPIs, use the highest value
+        best_performing_creative = media_buy_df.loc[media_buy_df[selected_kpi].idxmax()]
+    
+    st.write(f"**Media Buy Name:** {media_buy_name}")
+    st.write(f"**Best Performing Creative:** {best_performing_creative['name']}")
+    st.write(f"**KPI Value:** {best_performing_creative[selected_kpi]}")
+    st.write("---")
+
 ###steps id like to take next
-##1. dropdown to select KPI - should only be numeric or continuous variables
 #####might require auto-changing any $ variables to numeric first
 ##2. analysis boxes should be done by campaign, by audience, and then overall
+
