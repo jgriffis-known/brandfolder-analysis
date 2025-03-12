@@ -3,6 +3,7 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
+import numpy as np
 
 # Streamlit app title
 st.title("Brandfolder Creative Analysis")
@@ -82,6 +83,30 @@ if brandfolder_zip and brandfolder_csv and performance_data:
     ]
     selected_grouping = st.selectbox("Select how to group the performance data", grouping_options)
 
+    # Function to properly calculate CP metrics based on their components
+    def calculate_cp_metric(df, metric_name):
+        # Define the components needed for each CP metric
+        cp_components = {
+            'CPC': {'numerator': 'Media Cost', 'denominator': 'Clicks', 'multiplier': 1},
+            'CPM': {'numerator': 'Media Cost', 'denominator': 'Impressions', 'multiplier': 1000},
+            # Add other CP metrics as needed
+        }
+        
+        # Default for any CP metric not explicitly defined
+        default_components = {'numerator': 'Media Cost', 'denominator': 'Impressions', 'multiplier': 1}
+        
+        # Get the components for this metric
+        components = cp_components.get(metric_name, default_components)
+        
+        # Calculate the CP metric
+        numerator_sum = df[components['numerator']].sum()
+        denominator_sum = df[components['denominator']].sum()
+        
+        if denominator_sum > 0:
+            return (numerator_sum / denominator_sum) * components['multiplier']
+        else:
+            return np.nan
+
     # Function to display performance for a group
     def display_performance(df, group_name=""):
         # Check if df is empty or the selected KPI has all NaN values
@@ -100,14 +125,39 @@ if brandfolder_zip and brandfolder_csv and performance_data:
             st.write("---")
             return
         
+        # Group by 'name' to get creative-level data
+        grouped_by_creative = df_valid.groupby('name')
+        
+        # Create a DataFrame to hold recalculated metrics for each creative
+        creative_metrics = []
+        
+        for creative_name, creative_data in grouped_by_creative:
+            if selected_kpi.startswith('CP'):
+                # Recalculate the CP metric correctly
+                metric_value = calculate_cp_metric(creative_data, selected_kpi)
+                creative_metrics.append({
+                    'name': creative_name,
+                    selected_kpi: metric_value
+                })
+            else:
+                # For non-CP metrics, just sum the values
+                creative_metrics.append({
+                    'name': creative_name,
+                    selected_kpi: creative_data[selected_kpi].sum()
+                })
+        
+        # Convert to DataFrame
+        creative_metrics_df = pd.DataFrame(creative_metrics)
+        
+        # Sort based on the metric type
         if selected_kpi.startswith('CP'):
-            # For KPIs starting with 'CP', use ascending order (lowest values first)
-            sorted_df = df_valid.sort_values(by=selected_kpi)
+            # For CP metrics, lower is better
+            sorted_df = creative_metrics_df.sort_values(by=selected_kpi, na_position='last')
             best_performers = sorted_df.head(3)  # lowest values
             worst_performers = sorted_df.tail(3)  # highest values
         else:
-            # For other KPIs, use descending order (highest values first)
-            sorted_df = df_valid.sort_values(by=selected_kpi, ascending=False)
+            # For other metrics, higher is better
+            sorted_df = creative_metrics_df.sort_values(by=selected_kpi, ascending=False, na_position='last')
             best_performers = sorted_df.head(3)  # highest values
             worst_performers = sorted_df.tail(3)  # lowest values
         
@@ -115,11 +165,17 @@ if brandfolder_zip and brandfolder_csv and performance_data:
         
         st.write("#### Best Performing Creatives:")
         for index, row in best_performers.iterrows():
-            st.write(f"- **Creative Name:** {row['name']}, **KPI Value:** {row[selected_kpi]}")
+            metric_value = row[selected_kpi]
+            if pd.notnull(metric_value):
+                formatted_value = f"{metric_value:.2f}" if isinstance(metric_value, (float, int)) else metric_value
+                st.write(f"- **Creative Name:** {row['name']}, **{selected_kpi}:** {formatted_value}")
         
         st.write("#### Worst Performing Creatives:")
         for index, row in worst_performers.iterrows():
-            st.write(f"- **Creative Name:** {row['name']}, **KPI Value:** {row[selected_kpi]}")
+            metric_value = row[selected_kpi]
+            if pd.notnull(metric_value):
+                formatted_value = f"{metric_value:.2f}" if isinstance(metric_value, (float, int)) else metric_value
+                st.write(f"- **Creative Name:** {row['name']}, **{selected_kpi}:** {formatted_value}")
         
         st.write("---")
 
