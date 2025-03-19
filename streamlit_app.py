@@ -4,6 +4,12 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
+from anthropic import Anthropic
+import requests
+
+# Set up your API key
+api_key = "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"
+client = Anthropic(api_key=api_key)
 
 # Streamlit app title
 st.title("Brandfolder Creative Analysis")
@@ -204,3 +210,56 @@ if brandfolder_zip and brandfolder_csv and performance_data:
             media_buy_name = row['Media Buy Name']
             filtered_df = merged_df[(merged_df['Platforms'] == platform) & (merged_df['Media Buy Name'] == media_buy_name)]
             display_performance(filtered_df, f"Platforms: {platform}, Media Buy Name: {media_buy_name}")
+
+
+
+# Function to generate insights using Claude
+def generate_insights(data, selected_kpi, focus_variables):
+    api_key = "YOUR_API_KEY_HERE"
+    url = f"https://api.anthropic.com/v1/complete"
+    
+    prompt = f"Analyze the following data focusing on {', '.join(focus_variables)} and the KPI {selected_kpi}. Determine which characteristics of the creatives work best. If the KPI starts with 'CP', best means the lowest value; otherwise, it means the highest value. The data is: {data.to_dict(orient='records')}"
+    
+    payload = {
+        "prompt": prompt,
+        "model": "claude-3-7-sonnet-latest",
+        "max_tokens": 2048,
+        "temperature": 0.7,
+    }
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    
+    response = requests.post(url, headers=headers, json=payload)
+    
+    if response.status_code == 200:
+        return response.json()["completion"]
+    else:
+        return "Failed to generate insights."
+
+# Example usage
+if brandfolder_zip and brandfolder_csv and performance_data:
+    # ... (rest of your code remains the same)
+    
+    # Extract numeric columns from df_performance
+    numeric_columns = df_performance.select_dtypes(include=['number']).columns.tolist()
+
+    # Create a dropdown for selecting a numeric KPI
+    st.write("### Select a KPI to Analyze")
+    selected_kpi = st.selectbox("Select a KPI", numeric_columns)
+
+    # Focus variables for Claude
+    focus_variables = ["Tags", "Asset Type", "Creative Content"]
+
+    # Generate insights using Claude
+    insights = generate_insights(merged_df, selected_kpi, focus_variables)
+
+    st.write("### AI Insights")
+    st.write(insights)
+
+#Next Steps
+#1. Bring in the images
+#2. Start looking for trends on what's working 
+#3. Refine the trend analysis by controlling for key things.  Possibly choose how to control in a dropdown?
