@@ -8,7 +8,12 @@ from anthropic import Anthropic
 import requests
 
 # Set up your API key
-api_key = "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"
+import os
+from dotenv import load_dotenv
+
+load_dotenv()  # Load environment variables from .env
+
+api_key = os.getenv('API_KEY')
 client = Anthropic(api_key=api_key)
 
 # Streamlit app title
