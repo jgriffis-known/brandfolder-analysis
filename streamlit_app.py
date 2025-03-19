@@ -2,19 +2,17 @@
 
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
 import numpy as np
 from anthropic import Anthropic
-import requests
 
 # Set up your API key
 import os
 from dotenv import load_dotenv
 
 load_dotenv()  # Load environment variables from .env
-
-api_key = os.getenv('API_KEY')
+api_key = os.getenv('api_key')
 client = Anthropic(api_key=api_key)
+import requests
 
 # Streamlit app title
 st.title("Brandfolder Creative Analysis")
@@ -46,13 +44,14 @@ if brandfolder_zip and brandfolder_csv and performance_data:
         else:
             return x
 
-    # Apply the conversion function to all columns in df_performance
-    for col in df_performance.columns:
-        if df_performance[col].dtype == 'object':  # Check if column is of object type
+    # Apply the conversion function to numeric columns only
+    numeric_columns = ['Media Cost', 'Impressions', 'Clicks']  # Add other numeric columns here
+
+    for col in numeric_columns:
+        if col in df_performance.columns:
             try:
                 df_performance[col] = df_performance[col].apply(convert_currency_to_float)
             except ValueError:
-                # Handle columns that cannot be converted to float
                 print(f"Skipping column '{col}' as it cannot be converted to float.")
     
     # Extract Brandfolder Key from Creative Name
@@ -190,21 +189,43 @@ if brandfolder_zip and brandfolder_csv and performance_data:
         
         st.write("---")
 
+    # Function to generate insights using Claude
+    def generate_insights(data, selected_kpi):
+        focus_variables = ["Tags", "Asset Type", "Creative Content"]
+        prompt = f"Analyze the following data focusing on {', '.join(focus_variables)} and the KPI {selected_kpi}. Determine which characteristics of the creatives work best. If the KPI starts with 'CP', best means the lowest value; otherwise, it means the highest value. The data is: {data.to_dict(orient='records')}"
+        
+        response = client.messages.create(
+            model="claude-3-7-sonnet-latest",
+            max_tokens=2048,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        
+        return response.content[0].text
+
     # Display performance based on selected grouping
     st.write("### Best and Worst Performing Creatives")
     
     if selected_grouping == "Aggregate (All Data)":
         display_performance(merged_df, "All Data")
+        insights = generate_insights(merged_df, selected_kpi)
+        st.write("### AI Insights")
+        st.write(insights)
         
     elif selected_grouping == "Group by Platforms":
         for platform in merged_df['Platforms'].dropna().unique():
             platform_df = merged_df[merged_df['Platforms'] == platform]
             display_performance(platform_df, f"Platforms: {platform}")
+            insights = generate_insights(platform_df, selected_kpi)
+            st.write(f"### AI Insights for {platform}")
+            st.write(insights)
             
     elif selected_grouping == "Group by Media Buy Name":
         for media_buy_name in merged_df['Media Buy Name'].dropna().unique():
             media_buy_df = merged_df[merged_df['Media Buy Name'] == media_buy_name]
             display_performance(media_buy_df, f"Media Buy Name: {media_buy_name}")
+            insights = generate_insights(media_buy_df, selected_kpi)
+            st.write(f"### AI Insights for {media_buy_name}")
+            st.write(insights)
             
     elif selected_grouping == "Group by Platforms and Media Buy Name":
         # Get unique combinations of Platforms and Media Buy Name
@@ -215,54 +236,87 @@ if brandfolder_zip and brandfolder_csv and performance_data:
             media_buy_name = row['Media Buy Name']
             filtered_df = merged_df[(merged_df['Platforms'] == platform) & (merged_df['Media Buy Name'] == media_buy_name)]
             display_performance(filtered_df, f"Platforms: {platform}, Media Buy Name: {media_buy_name}")
+            insights = generate_insights(filtered_df, selected_kpi)
+            st.write(f"### AI Insights for {platform}, {media_buy_name}")
+            st.write(insights)
 
 
 
 # Function to generate insights using Claude
-def generate_insights(data, selected_kpi, focus_variables):
-    api_key = "YOUR_API_KEY_HERE"
-    url = f"https://api.anthropic.com/v1/complete"
-    
+def generate_insights(data, selected_kpi):
+    focus_variables = ["Tags", "Asset Type", "Creative Content"]
     prompt = f"Analyze the following data focusing on {', '.join(focus_variables)} and the KPI {selected_kpi}. Determine which characteristics of the creatives work best. If the KPI starts with 'CP', best means the lowest value; otherwise, it means the highest value. The data is: {data.to_dict(orient='records')}"
     
-    payload = {
-        "prompt": prompt,
-        "model": "claude-3-7-sonnet-latest",
-        "max_tokens": 2048,
-        "temperature": 0.7,
-    }
-    
     headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
+        'Authorization': f'Bearer {api_key}',
+        'Content-Type': 'application/json',
     }
     
-    response = requests.post(url, headers=headers, json=payload)
+    payload = {
+        'prompt': prompt,
+        'model': 'claude-3-7-sonnet-latest',
+        'max_tokens': 2048,
+        'temperature': 0.7,
+    }
+    
+    response = requests.post('https://api.anthropic.com/v1/complete', headers=headers, json=payload)
     
     if response.status_code == 200:
         return response.json()["completion"]
     else:
         return "Failed to generate insights."
 
-# Example usage
+# Example usage in your app
 if brandfolder_zip and brandfolder_csv and performance_data:
     # ... (rest of your code remains the same)
     
-    # Extract numeric columns from df_performance
-    numeric_columns = df_performance.select_dtypes(include=['number']).columns.tolist()
-
     # Create a dropdown for selecting a numeric KPI
     st.write("### Select a KPI to Analyze")
     selected_kpi = st.selectbox("Select a KPI", numeric_columns)
 
-    # Focus variables for Claude
-    focus_variables = ["Tags", "Asset Type", "Creative Content"]
+    # Create a dropdown for selecting grouping method
+    st.write("### Select Performance Grouping")
+    grouping_options = [
+        "Aggregate (All Data)", 
+        "Group by Platforms", 
+        "Group by Media Buy Name", 
+        "Group by Platforms and Media Buy Name"
+    ]
+    selected_grouping = st.selectbox("Select how to group the performance data", grouping_options)
 
-    # Generate insights using Claude
-    insights = generate_insights(merged_df, selected_kpi, focus_variables)
-
-    st.write("### AI Insights")
-    st.write(insights)
+    # Display performance based on selected grouping
+    st.write("### Best and Worst Performing Creatives")
+    
+    if selected_grouping == "Aggregate (All Data)":
+        insights = generate_insights(merged_df, selected_kpi)
+        st.write("### AI Insights")
+        st.write(insights)
+        
+    elif selected_grouping == "Group by Platforms":
+        for platform in merged_df['Platforms'].dropna().unique():
+            platform_df = merged_df[merged_df['Platforms'] == platform]
+            insights = generate_insights(platform_df, selected_kpi)
+            st.write(f"### AI Insights for {platform}")
+            st.write(insights)
+            
+    elif selected_grouping == "Group by Media Buy Name":
+        for media_buy_name in merged_df['Media Buy Name'].dropna().unique():
+            media_buy_df = merged_df[merged_df['Media Buy Name'] == media_buy_name]
+            insights = generate_insights(media_buy_df, selected_kpi)
+            st.write(f"### AI Insights for {media_buy_name}")
+            st.write(insights)
+            
+    elif selected_grouping == "Group by Platforms and Media Buy Name":
+        # Get unique combinations of Platforms and Media Buy Name
+        platform_media_combinations = merged_df.dropna(subset=['Platforms', 'Media Buy Name']).groupby(['Platforms', 'Media Buy Name']).size().reset_index().drop(0, axis=1)
+        
+        for _, row in platform_media_combinations.iterrows():
+            platform = row['Platforms']
+            media_buy_name = row['Media Buy Name']
+            filtered_df = merged_df[(merged_df['Platforms'] == platform) & (merged_df['Media Buy Name'] == media_buy_name)]
+            insights = generate_insights(filtered_df, selected_kpi)
+            st.write(f"### AI Insights for {platform}, {media_buy_name}")
+            st.write(insights)
 
 #Next Steps
 #1. Bring in the images
