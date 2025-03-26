@@ -4,6 +4,13 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from anthropic import Anthropic
+from fuzzywuzzy import fuzz
+from PIL import Image
+import zipfile
+import io
+import tempfile
+import subprocess
+from io import BytesIO
 
 # Set up your API key
 import os
@@ -93,6 +100,48 @@ if brandfolder_zip and brandfolder_csv and performance_data:
     ]
     selected_grouping = st.selectbox("Select how to group the performance data", grouping_options)
 
+    # Function to convert .mov files to .mp4
+    def convert_mov_to_mp4(zip_file):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Extract zip contents
+            with zipfile.ZipFile(zip_file, 'r') as zip_ref:
+                zip_ref.extractall(temp_dir)
+
+            # Walk through the extracted files
+            for root, dirs, files in os.walk(temp_dir):
+                for file in files:
+                    if file.lower().endswith('.mov'):
+                        mov_path = os.path.join(root, file)
+                        mp4_path = mov_path.rsplit('.', 1)[0] + '.mp4'
+
+                        try:
+                            # Use ffmpeg to convert .mov to .mp4
+                            subprocess.run([
+                                'ffmpeg',
+                                '-i', mov_path,
+                                '-vcodec', 'libx264',
+                                '-acodec', 'aac',
+                                mp4_path
+                            ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+                            os.remove(mov_path)  # Remove original .mov
+                        except subprocess.CalledProcessError as e:
+                            st.error(f"Error converting {file} with ffmpeg.")
+
+            # Re-zip contents into a new zip in memory
+            mem_zip = BytesIO()
+            with zipfile.ZipFile(mem_zip, 'w', zipfile.ZIP_DEFLATED) as new_zip:
+                for root, dirs, files in os.walk(temp_dir):
+                    for file in files:
+                        full_path = os.path.join(root, file)
+                        rel_path = os.path.relpath(full_path, temp_dir)
+                        new_zip.write(full_path, rel_path)
+
+            mem_zip.seek(0)
+            return mem_zip
+    
+    brandfolder_zip = convert_mov_to_mp4(brandfolder_zip)
+    
     # Function to properly calculate CP metrics based on their components
     def calculate_cp_metric(df, metric_name):
         # Define the components needed for each CP metric
@@ -117,6 +166,72 @@ if brandfolder_zip and brandfolder_csv and performance_data:
         else:
             return np.nan
 
+    # Function to match creative name to image
+    def find_closest_matching_creative(creative_name, uploaded_zip):
+        valid_image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp')
+        valid_video_extensions = ('.mp4', '.mov', '.webm')
+
+        try:
+            with zipfile.ZipFile(uploaded_zip) as outer_zip:
+                file_list = outer_zip.namelist()
+
+                # 1. Try to match images
+                image_files = [f for f in file_list if f.lower().endswith(valid_image_extensions)]
+                if image_files:
+                    best_image_match = max(image_files, key=lambda f: fuzz.ratio(creative_name.lower(), os.path.basename(f).lower()))
+                    best_image_score = fuzz.ratio(creative_name.lower(), os.path.basename(best_image_match).lower())
+
+                    if best_image_score > 60:
+                        with outer_zip.open(best_image_match) as img_file:
+                            try:
+                                return 'image', Image.open(io.BytesIO(img_file.read()))
+                            except Exception as e:
+                                print(f"Error loading image '{best_image_match}': {e}")
+
+                # 2. Try to match video files
+                video_files = [f for f in file_list if f.lower().endswith(valid_video_extensions)]
+                if video_files:
+                    best_video_match = max(video_files, key=lambda f: fuzz.ratio(creative_name.lower(), os.path.basename(f).lower()))
+                    best_video_score = fuzz.ratio(creative_name.lower(), os.path.basename(best_video_match).lower())
+
+                    if best_video_score > 60:
+                        with outer_zip.open(best_video_match) as video_file:
+                            video_bytes = video_file.read()
+                            return 'video', video_bytes
+
+                # 3. Try to match nested ZIPs and extract index.html
+                nested_zips = [f for f in file_list if f.lower().endswith(".zip")]
+                for nested_zip_path in nested_zips:
+                    zip_base_name = os.path.basename(nested_zip_path).rsplit(".", 1)[0]
+                    match_score = fuzz.ratio(creative_name.lower(), zip_base_name.lower())
+                    print(f"Trying nested zip: {nested_zip_path}, match score: {match_score}")
+
+                    if match_score > 60:
+                        try:
+                            with outer_zip.open(nested_zip_path) as nested_zip_bytes:
+                                with zipfile.ZipFile(io.BytesIO(nested_zip_bytes.read())) as nested_zip:
+                                    temp_dir = tempfile.mkdtemp(prefix="creative_")
+                                    nested_zip.extractall(temp_dir)
+
+                                    print(f"Extracted nested zip to: {temp_dir}")
+                                    
+                                    # Walk the extracted contents
+                                    for root, dirs, files in os.walk(temp_dir):
+                                        for file in files:
+                                            print(f"Found file in nested zip: {file}")
+                                            if file.lower() == "index.html":
+                                                index_path = os.path.join(root, file)
+                                                print(f"Found index.html: {index_path}")
+                                                return 'html_link', index_path
+                        except Exception as e:
+                            print(f"Failed to read nested zip '{nested_zip_path}': {e}")
+
+                return None, None
+
+        except Exception as e:
+            print(f"Zip handling error: {e}")
+            return None, None
+    
     # Function to display performance for a group
     def display_performance(df, group_name=""):
         # Check if df is empty or the selected KPI has all NaN values
@@ -179,6 +294,23 @@ if brandfolder_zip and brandfolder_csv and performance_data:
             if pd.notnull(metric_value):
                 formatted_value = f"{metric_value:.2f}" if isinstance(metric_value, (float, int)) else metric_value
                 st.write(f"- **Creative Name:** {row['name']}, **{selected_kpi}:** {formatted_value}")
+            match_type, content = find_closest_matching_creative(row["name"], brandfolder_zip)
+
+            if match_type == "image":
+                st.image(content, caption=row["name"], use_container_width=True)
+
+            elif match_type == "video":
+                st.video(content)
+
+            elif match_type == "html_link":
+                html_file_path = os.path.abspath(content)
+                st.markdown(
+                    f'[🔗 Copy and Paste link to open Animated Creative in New Tab](file://{html_file_path})',
+                    unsafe_allow_html=True
+                )
+
+            else:
+                st.warning("No matching creative found.")
         
         st.write("#### Worst Performing Creatives:")
         for index, row in worst_performers.iterrows():
@@ -186,7 +318,24 @@ if brandfolder_zip and brandfolder_csv and performance_data:
             if pd.notnull(metric_value):
                 formatted_value = f"{metric_value:.2f}" if isinstance(metric_value, (float, int)) else metric_value
                 st.write(f"- **Creative Name:** {row['name']}, **{selected_kpi}:** {formatted_value}")
-        
+                match_type, content = find_closest_matching_creative(row["name"], brandfolder_zip)
+
+                if match_type == "image":
+                    st.image(content, caption=row["name"], use_container_width=True)
+
+                elif match_type == "video":
+                    st.video(content)
+
+                elif match_type == "html_link":
+                    html_file_path = os.path.abspath(content)
+                    st.markdown(
+                        f'[🔗 Copy and Paste link to open Animated Creative in New Tab](file://{html_file_path})',
+                        unsafe_allow_html=True
+                    )
+
+                else:
+                    st.warning("No matching creative found.")
+                        
         st.write("---")
 
     # Function to generate insights using Claude
