@@ -297,7 +297,7 @@ if brandfolder_zip and brandfolder_csv and performance_data:
             match_type, content = find_closest_matching_creative(row["name"], brandfolder_zip)
 
             if match_type == "image":
-                st.image(content, caption=row["name"], use_container_width=True)
+                st.image(content, caption=row["name"], use_column_width=True)
 
             elif match_type == "video":
                 st.video(content)
@@ -321,7 +321,7 @@ if brandfolder_zip and brandfolder_csv and performance_data:
                 match_type, content = find_closest_matching_creative(row["name"], brandfolder_zip)
 
                 if match_type == "image":
-                    st.image(content, caption=row["name"], use_container_width=True)
+                    st.image(content, caption=row["name"], use_column_width=True)
 
                 elif match_type == "video":
                     st.video(content)
