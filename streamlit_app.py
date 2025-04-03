@@ -72,7 +72,7 @@ if brandfolder_zip and brandfolder_csv and performance_data:
             df_performance = pd.read_excel(performance_data)
             
             # Validate required columns exist
-            required_columns = ['Platform', 'Media Buy Name', 'Creative Name']
+            required_columns = ['Platforms', 'Media Buy Name', 'Creative Name']
             missing_cols = [col for col in required_columns if col not in df_performance.columns]
             if missing_cols:
                 st.error(f"Missing required columns in performance data: {', '.join(missing_cols)}")
@@ -158,8 +158,8 @@ if brandfolder_zip and brandfolder_csv and performance_data:
             display_creative_group(merged_df.nsmallest(6, selected_kpi), "Improvement Opportunities")
             
         elif selected_grouping == "By Platform":
-            for platform in merged_df['Platform'].unique():
-                platform_df = merged_df[merged_df['Platform'] == platform]
+            for platform in merged_df['Platforms'].unique():
+                platform_df = merged_df[merged_df['Platforms'] == platform]
                 display_creative_group(platform_df.nlargest(3, selected_kpi), f"Top Performers - {platform}")
                 display_creative_group(platform_df.nsmallest(3, selected_kpi), f"Improvement Opportunities - {platform}")
                 
@@ -170,7 +170,7 @@ if brandfolder_zip and brandfolder_csv and performance_data:
                 display_creative_group(media_buy_df.nsmallest(3, selected_kpi), f"Improvement Opportunities - {media_buy}")
                 
         elif selected_grouping == "Platform & Media Buy":
-            grouped = merged_df.groupby(['Platform', 'Media Buy Name'])
+            grouped = merged_df.groupby(['Platforms', 'Media Buy Name'])
             for (platform, media_buy), group_df in grouped:
                 if not group_df.empty:
                     display_creative_group(group_df.nlargest(2, selected_kpi), f"Top Performers - {platform} | {media_buy}")
