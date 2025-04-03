@@ -118,6 +118,8 @@ if brandfolder_zip and brandfolder_csv and performance_data:
         "By Media Buy", 
         "Platform & Media Buy Combination"
     ])
+ 
+    # Display creative content in grid
     # Visualization Section
     st.header("📈 Creative Performance")
     with st.expander("Advanced Filters"):
@@ -144,7 +146,7 @@ if brandfolder_zip and brandfolder_csv and performance_data:
                             st.warning("No preview available")
                             
                         st.metric(selected_kpi, f"{row[selected_kpi]:.2f}")
-                        
+
     # Display AI Insights in formatted box            
     def display_insights(insights_text):
         st.markdown(f"""
