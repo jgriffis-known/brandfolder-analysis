@@ -3,21 +3,24 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from anthropic import Anthropic
-from fuzzywuzzy import fuzz
-from PIL import Image
 import zipfile
 import io
 import tempfile
 import subprocess
 import os
-import requests
-from io import BytesIO
+import re
+import shutil
+from pathlib import Path
+from PIL import Image
+from anthropic import Anthropic
+from fuzzywuzzy import fuzz
 from dotenv import load_dotenv
+from io import BytesIO
 
 # Configuration
 load_dotenv()
 MAX_IMAGE_WIDTH = 600
+MAX_VIDEO_WIDTH = 800
 THEME_CONFIG = {
     "primaryColor": "#4CAF50",
     "backgroundColor": "#FFFFFF",
@@ -45,15 +48,15 @@ st.markdown(f"""
         background-color: {THEME_CONFIG['primaryColor']};
         color: white;
     }}
+    video {{
+        max-width: {MAX_VIDEO_WIDTH}px !important;
+    }}
     </style>
     """, unsafe_allow_html=True)
 
-# File upload section
-with st.sidebar:
-    st.header("📤 Upload Files")
-    brandfolder_zip = st.file_uploader("Brandfolder Zip", type=["zip"])
-    brandfolder_csv = st.file_uploader("Brandfolder CSV", type=["csv"])
-    performance_data = st.file_uploader("Performance Data XLSX", type=["xlsx"])
+def sanitize_filename(filename):
+    """Remove invalid characters from filenames"""
+    return re.sub(r'[\\/*?:"<>|\x00]', "", str(filename))
 
 def display_image(content, caption):
     """Display image with controlled dimensions"""
@@ -66,81 +69,105 @@ def display_image(content, caption):
     except Exception as e:
         st.error(f"Error displaying image: {str(e)}")
 
+def handle_video(content, creative_name):
+    """Handle video display with proper temp file management"""
+    try:
+        # Create temp directory if it doesn't exist
+        temp_dir = Path(tempfile.mkdtemp())
+        temp_file = temp_dir / f"{sanitize_filename(creative_name)}.mp4"
+        
+        with open(temp_file, "wb") as f:
+            f.write(content)
+        
+        # Display video with controlled width
+        st.video(str(temp_file), format="video/mp4", start_time=0)
+    except Exception as e:
+        st.error(f"Error displaying video: {str(e)}")
+
 def convert_mov_to_mp4(zip_file):
-    """Convert .mov files to .mp4 with error handling"""
+    """Convert .mov files to .mp4 with enhanced error handling"""
     if not shutil.which('ffmpeg'):
         st.error("FFmpeg not found! Please install FFmpeg and ensure it's in your PATH.")
         return zip_file
 
-    with tempfile.TemporaryDirectory() as temp_dir:
-        with zipfile.ZipFile(zip_file, 'r') as zip_ref:
-            zip_ref.extractall(temp_dir)
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with zipfile.ZipFile(zip_file, 'r') as zip_ref:
+                zip_ref.extractall(temp_dir)
 
-        for root, dirs, files in os.walk(temp_dir):
-            for file in files:
-                if file.lower().endswith('.mov'):
-                    mov_path = os.path.join(root, file)
-                    mp4_path = mov_path.rsplit('.', 1)[0] + '.mp4'
-                    try:
-                        subprocess.run([
-                            'ffmpeg',
-                            '-i', mov_path,
-                            '-vcodec', 'libx264',
-                            '-acodec', 'aac',
-                            mp4_path
-                        ], check=True)
-                        os.remove(mov_path)
-                    except subprocess.CalledProcessError as e:
-                        st.error(f"Error converting {file}: {str(e)}")
-
-        mem_zip = BytesIO()
-        with zipfile.ZipFile(mem_zip, 'w', zipfile.ZIP_DEFLATED) as new_zip:
-            for root, dirs, files in os.walk(temp_dir):
+            for root, _, files in os.walk(temp_dir):
                 for file in files:
-                    full_path = os.path.join(root, file)
-                    rel_path = os.path.relpath(full_path, temp_dir)
-                    new_zip.write(full_path, rel_path)
-        mem_zip.seek(0)
-        return mem_zip
+                    if file.lower().endswith('.mov'):
+                        mov_path = Path(root) / file
+                        mp4_path = mov_path.with_suffix('.mp4')
+                        
+                        try:
+                            subprocess.run([
+                                'ffmpeg', '-y',
+                                '-i', str(mov_path),
+                                '-c:v', 'libx264',
+                                '-preset', 'fast',
+                                '-crf', '22',
+                                '-c:a', 'aac',
+                                '-b:a', '128k',
+                                '-pix_fmt', 'yuv420p',
+                                str(mp4_path)
+                            ], check=True, capture_output=True)
+                            mov_path.unlink()
+                        except subprocess.CalledProcessError as e:
+                            st.error(f"Error converting {file}: {e.stderr.decode()}")
+
+            mem_zip = BytesIO()
+            with zipfile.ZipFile(mem_zip, 'w', zipfile.ZIP_DEFLATED) as new_zip:
+                for root, _, files in os.walk(temp_dir):
+                    for file in files:
+                        full_path = Path(root) / file
+                        rel_path = full_path.relative_to(temp_dir)
+                        new_zip.write(full_path, rel_path.as_posix())
+            
+            mem_zip.seek(0)
+            return mem_zip
+    except Exception as e:
+        st.error(f"Video conversion error: {str(e)}")
+        return zip_file
 
 def find_closest_matching_creative(creative_name, uploaded_zip):
-    valid_image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp')
-    valid_video_extensions = ('.mp4', '.mov', '.webm')
+    """Match creative name to assets with improved error handling"""
+    valid_image_ext = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp')
+    valid_video_ext = ('.mp4', '.mov', '.webm')
 
     try:
-        with zipfile.ZipFile(uploaded_zip) as outer_zip:
-            file_list = outer_zip.namelist()
+        with zipfile.ZipFile(uploaded_zip) as zip_ref:
+            file_list = [sanitize_filename(f) for f in zip_ref.namelist()]
 
-            # 1. Try to match images
-            image_files = [f for f in file_list if f.lower().endswith(valid_image_extensions)]
+            # Try matching images first
+            image_files = [f for f in file_list if f.lower().endswith(valid_image_ext)]
             if image_files:
-                best_image_match = max(image_files, key=lambda f: fuzz.ratio(creative_name.lower(), os.path.basename(f).lower()))
-                best_image_score = fuzz.ratio(creative_name.lower(), os.path.basename(best_image_match).lower())
+                best_image = max(image_files, key=lambda f: fuzz.ratio(creative_name.lower(), Path(f).stem.lower()))
+                if fuzz.ratio(creative_name.lower(), Path(best_image).stem.lower()) > 60:
+                    with zip_ref.open(best_image) as f:
+                        return 'image', BytesIO(f.read())
 
-                if best_image_score > 60:
-                    with outer_zip.open(best_image_match) as img_file:
-                        try:
-                            return 'image', img_file.read()  # Return raw bytes instead of a Pillow object
-                        except Exception as e:
-                            print(f"Error loading image '{best_image_match}': {e}")
-
-            # 2. Try to match video files
-            video_files = [f for f in file_list if f.lower().endswith(valid_video_extensions)]
+            # Try matching videos
+            video_files = [f for f in file_list if f.lower().endswith(valid_video_ext)]
             if video_files:
-                best_video_match = max(video_files, key=lambda f: fuzz.ratio(creative_name.lower(), os.path.basename(f).lower()))
-                best_video_score = fuzz.ratio(creative_name.lower(), os.path.basename(best_video_match).lower())
-
-                if best_video_score > 60:
-                    with outer_zip.open(best_video_match) as video_file:
-                        return 'video', video_file.read()
+                best_video = max(video_files, key=lambda f: fuzz.ratio(creative_name.lower(), Path(f).stem.lower()))
+                if fuzz.ratio(creative_name.lower(), Path(best_video).stem.lower()) > 60:
+                    with zip_ref.open(best_video) as f:
+                        return 'video', f.read()
 
             return None, None
-
     except Exception as e:
-        print(f"Zip handling error: {e}")
+        st.error(f"File processing error: {str(e)}")
         return None, None
 
-# Main app logic
+# File upload section
+with st.sidebar:
+    st.header("📤 Upload Files")
+    brandfolder_zip = st.file_uploader("Brandfolder Zip", type=["zip"])
+    brandfolder_csv = st.file_uploader("Brandfolder CSV", type=["csv"])
+    performance_data = st.file_uploader("Performance Data XLSX", type=["xlsx"])
+
 if brandfolder_zip and brandfolder_csv and performance_data:
     # Data processing
     @st.cache_data
@@ -152,16 +179,17 @@ if brandfolder_zip and brandfolder_csv and performance_data:
         for col in numeric_cols:
             if col in df_performance.columns:
                 try:
-                    df_performance[col] = df_performance[col].apply(
-                        lambda x: float(x.replace('$', '').replace(',', '')) if isinstance(x, str) else x
-                    )
-                except ValueError:
-                    pass
+                    df_performance[col] = df_performance[col].replace('[\$,]', '', regex=True).astype(float)
+                except Exception as e:
+                    st.error(f"Error converting {col}: {str(e)}")
         
-        df_performance['Brandfolder Key'] = df_performance['Creative Name'].str.split('_').str[-1]
+        df_performance['Brandfolder Key'] = df_performance['Creative Name'].str.extract(r'_([^_]+)$')
         return pd.merge(df_performance, df_brandfolder, left_on='Brandfolder Key', right_on='key', how='inner')
 
     merged_df = process_data()
+    
+    # Convert MOV files first
+    brandfolder_zip = convert_mov_to_mp4(brandfolder_zip)
     
     # Analysis controls
     st.header("📊 Performance Analysis")
@@ -179,7 +207,7 @@ if brandfolder_zip and brandfolder_csv and performance_data:
     # Visualization section
     st.header("📈 Creative Performance")
     
-    def display_creative_grid(df, title):
+    def display_creative_group(df, title):
         with st.expander(title):
             cols = st.columns(3)
             for idx, (_, row) in enumerate(df.iterrows()):
@@ -191,15 +219,15 @@ if brandfolder_zip and brandfolder_csv and performance_data:
                         if match_type == "image":
                             display_image(content, "")
                         elif match_type == "video":
-                            st.video(content)
+                            handle_video(content, row["name"])
                         else:
                             st.warning("No preview available")
                         st.metric(selected_kpi, f"{row[selected_kpi]:.2f}")
 
     # Display results based on grouping
     if selected_grouping == "Overall Performance":
-        display_creative_grid(merged_df.nlargest(6, selected_kpi), "Top Performers")
-        display_creative_grid(merged_df.nsmallest(6, selected_kpi), "Improvement Opportunities")
+        display_creative_group(merged_df.nlargest(6, selected_kpi), "Top Performers")
+        display_creative_group(merged_df.nsmallest(6, selected_kpi), "Improvement Opportunities")
     else:
         # Add grouping-specific logic here
         pass
@@ -209,20 +237,23 @@ if brandfolder_zip and brandfolder_csv and performance_data:
     with st.spinner("Generating insights..."):
         try:
             insights = client.messages.create(
-                model="claude-3-haiku-20240307",
+                model="claude-3-sonnet-20240229",
                 max_tokens=1000,
                 messages=[{
                     "role": "user",
-                    "content": f"Analyze these top performers ({selected_kpi}): {merged_df.nlargest(3, selected_kpi)['name'].tolist()}"
+                    "content": f"Analyze these marketing creatives based on {selected_kpi}. Identify top 3 characteristics of successful content. Focus on visual elements, messaging, and technical specifications. Format as bullet points with emojis."
                 }]
             ).content[0].text
+            
             st.markdown(f"""
             <div style="
-                padding: 1rem;
+                padding: 1.5rem;
                 border-radius: 0.5rem;
                 background: {THEME_CONFIG['secondaryBackgroundColor']};
                 margin: 1rem 0;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
             ">
+                <h4 style='color:{THEME_CONFIG['primaryColor']}; margin-top:0;'>🎯 Key Recommendations</h4>
                 {insights}
             </div>
             """, unsafe_allow_html=True)
