@@ -164,39 +164,6 @@ def find_closest_matching_creative(creative_name, uploaded_zip):
         st.error(f"File processing error: {str(e)}")
         return None, None
     
-    # File upload section
-with st.sidebar:
-    st.header("📤 Upload Files")
-    brandfolder_zip = st.file_uploader("Brandfolder Zip", type=["zip"])
-    brandfolder_csv = st.file_uploader("Brandfolder CSV", type=["csv"])
-    performance_data = st.file_uploader("Performance Data XLSX", type=["xlsx"])
-
-if brandfolder_zip and brandfolder_csv and performance_data:
-
-    @st.cache_data
-    def process_data():
-        df_brandfolder = pd.read_csv(brandfolder_csv)
-        df_performance = pd.read_excel(performance_data)
-        
-        numeric_cols = ['Media Cost', 'Impressions', 'Clicks']
-        for col in numeric_cols:
-            if col in df_performance.columns:
-                try:
-                    df_performance[col] = df_performance[col].replace('[\$,]', '', regex=True).astype(float)
-                except Exception as e:
-                    st.error(f"Error converting {col}: {str(e)}")
-        
-        df_performance['Brandfolder Key'] = df_performance['Creative Name'].str.extract(r'_([^_]+)$')
-        
-        # Ensure Platform and Media Buy columns exist directly from input files.
-        return pd.merge(df_performance, df_brandfolder, left_on='Brandfolder Key', right_on='key', how='inner')
-
-    
-    merged_df = process_data()
-    
-    # Convert MOV files first
-    brandfolder_zip = convert_mov_to_mp4(brandfolder_zip)
-
     # Display results based on grouping
     if selected_grouping == "Overall Performance":
         display_creative_group(merged_df.nlargest(6, selected_kpi), "Top Performers")
@@ -232,23 +199,22 @@ if brandfolder_zip and brandfolder_csv and performance_data:
                     display_creative_group(group_df.nsmallest(2, selected_kpi), 
                                          f"Improvement Opportunities - {platform} | {media_buy}")
                     
-
-
     # AI Insights
     st.header("🤖 AI Recommendations")
     with st.spinner("Generating insights..."):
         try:
-            insights = client.messages.create(
-                model="claude-3-sonnet-20240229",
-                max_tokens=1000,
-                messages=[{
-                    "role": "user",
-                    "content": f"Analyze these {len(merged_df)} creatives based on {selected_kpi}. " +
-                               "Identify top 3 success factors and 3 improvement opportunities. " +
-                               "Focus on visual elements, messaging, and technical specs. " +
-                               "Format with emojis and bullet points."
-                }]
-            ).content[0].text
+            insights_request_content = (
+                f"Analyze these marketing creatives based on '{selected_kpi}'. "
+                "Identify top 3 characteristics of successful content. Focus on visual elements, messaging,"
+                "and technical specifications. Format as bullet points with emojis."
+            )
+            
+            response_content = client.completion(
+                prompt=insights_request_content,
+                model="claude-v1",
+                max_tokens=300,
+                temperature=0.7,
+            ).completion
             
             st.markdown(f"""
             <div style="
@@ -259,7 +225,7 @@ if brandfolder_zip and brandfolder_csv and performance_data:
                 box-shadow: 0 2px 4px rgba(0,0,0,0.1);
             ">
                 <h4 style='color:{THEME_CONFIG['primaryColor']}; margin-top:0;'>🎯 Key Recommendations</h4>
-                {insights}
+                {response_content}
             </div>
             """, unsafe_allow_html=True)
             
@@ -267,3 +233,6 @@ if brandfolder_zip and brandfolder_csv and performance_data:
             st.error(f"Failed to generate insights: {str(e)}")
 
 # Ensure all code is properly indented under the main conditional block
+
+        else:
+         st.warning("Please upload all required files to proceed.")
