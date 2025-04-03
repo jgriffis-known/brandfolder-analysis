@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 
 # Configuration
 load_dotenv()
-MAX_IMAGE_WIDTH = 600  # Adjust based on your preference
+MAX_IMAGE_WIDTH = 600
 THEME_CONFIG = {
     "primaryColor": "#4CAF50",
     "backgroundColor": "#FFFFFF",
@@ -51,13 +51,9 @@ st.markdown(f"""
 # File upload section
 with st.sidebar:
     st.header("📤 Upload Files")
-    
-    brandfolder_zip = st.file_uploader("Brandfolder Zip", type=["zip"],
-                                      help="Select all files you'd like to include in Brandfolder and download as zip")
-    brandfolder_csv = st.file_uploader("Brandfolder CSV", type=["csv"],
-                                      help="Select all files you'd like to include in Brandfolder and download as CSV")
-    performance_data = st.file_uploader("Performance Data XLSX", type=["xlsx"],
-                                       help="Utilize Pivot Tables in MCI with required variables")
+    brandfolder_zip = st.file_uploader("Brandfolder Zip", type=["zip"])
+    brandfolder_csv = st.file_uploader("Brandfolder CSV", type=["csv"])
+    performance_data = st.file_uploader("Performance Data XLSX", type=["xlsx"])
 
 def display_image(content, caption):
     """Display image with controlled dimensions"""
@@ -76,59 +72,107 @@ def convert_mov_to_mp4(zip_file):
         st.error("FFmpeg not found! Please install FFmpeg and ensure it's in your PATH.")
         return zip_file
 
-    # ... rest of conversion function remains same ...
+    with tempfile.TemporaryDirectory() as temp_dir:
+        with zipfile.ZipFile(zip_file, 'r') as zip_ref:
+            zip_ref.extractall(temp_dir)
 
-def generate_insights(data, selected_kpi):
-    """Generate AI insights with improved error handling"""
-    focus_vars = ["Tags", "Asset Type", "Creative Content"]
-    prompt = f"""Analyze this marketing creative data focusing on {', '.join(focus_vars)} and KPI {selected_kpi}.
-    Identify top performing characteristics. Format response with bullet points. 
-    Data: {data.to_dict(orient='records')}"""
+        for root, dirs, files in os.walk(temp_dir):
+            for file in files:
+                if file.lower().endswith('.mov'):
+                    mov_path = os.path.join(root, file)
+                    mp4_path = mov_path.rsplit('.', 1)[0] + '.mp4'
+                    try:
+                        subprocess.run([
+                            'ffmpeg',
+                            '-i', mov_path,
+                            '-vcodec', 'libx264',
+                            '-acodec', 'aac',
+                            mp4_path
+                        ], check=True)
+                        os.remove(mov_path)
+                    except subprocess.CalledProcessError as e:
+                        st.error(f"Error converting {file}: {str(e)}")
+
+        mem_zip = BytesIO()
+        with zipfile.ZipFile(mem_zip, 'w', zipfile.ZIP_DEFLATED) as new_zip:
+            for root, dirs, files in os.walk(temp_dir):
+                for file in files:
+                    full_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(full_path, temp_dir)
+                    new_zip.write(full_path, rel_path)
+        mem_zip.seek(0)
+        return mem_zip
+
+def find_closest_matching_creative(creative_name, uploaded_zip):
+    """Match creative name to assets in ZIP file"""
+    valid_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.mp4', '.mov', '.webm')
     
     try:
-        response = client.messages.create(
-            model="claude-3-haiku-20240307",
-            max_tokens=1000,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        return response.content[0].text
+        with zipfile.ZipFile(uploaded_zip) as zip_ref:
+            file_list = zip_ref.namelist()
+            best_match = None
+            best_score = 0
+
+            for file in file_list:
+                if file.lower().endswith(valid_extensions):
+                    score = fuzz.ratio(creative_name.lower(), os.path.basename(file).lower())
+                    if score > best_score:
+                        best_match = file
+                        best_score = score
+
+            if best_score > 60:
+                with zip_ref.open(best_match) as file:
+                    content = file.read()
+                    if best_match.lower().endswith(('.mp4', '.mov', '.webm')):
+                        return 'video', content
+                    else:
+                        return 'image', Image.open(io.BytesIO(content))
+            return None, None
     except Exception as e:
-        st.error(f"AI Insight Generation Failed: {str(e)}")
-        return "Insights unavailable - please try again later."
+        st.error(f"Error processing ZIP file: {str(e)}")
+        return None, None
 
 # Main app logic
 if brandfolder_zip and brandfolder_csv and performance_data:
-    # Data processing (cached)
+    # Data processing
     @st.cache_data
     def process_data():
-        # ... data processing logic remains same ...
-        return merged_df
-    
+        df_brandfolder = pd.read_csv(brandfolder_csv)
+        df_performance = pd.read_excel(performance_data)
+        
+        numeric_cols = ['Media Cost', 'Impressions', 'Clicks']
+        for col in numeric_cols:
+            if col in df_performance.columns:
+                try:
+                    df_performance[col] = df_performance[col].apply(
+                        lambda x: float(x.replace('$', '').replace(',', '')) if isinstance(x, str) else x
+                    )
+                except ValueError:
+                    pass
+        
+        df_performance['Brandfolder Key'] = df_performance['Creative Name'].str.split('_').str[-1]
+        return pd.merge(df_performance, df_brandfolder, left_on='Brandfolder Key', right_on='key', how='inner')
+
     merged_df = process_data()
     
-    # KPI Selection
+    # Analysis controls
     st.header("📊 Performance Analysis")
-    numeric_cols = merged_df.select_dtypes(include=np.number).columns.tolist()
-    selected_kpi = st.selectbox("Select Key Performance Indicator", numeric_cols)
-    
-    # Grouping Selection
-    grouping = st.selectbox("Analysis Grouping", [
-        "Overall Performance", 
-        "By Platform", 
-        "By Media Buy", 
-        "Platform & Media Buy Combination"
-    ])
- 
-    # Display creative content in grid
-    # Visualization Section
+    col1, col2 = st.columns(2)
+    with col1:
+        selected_kpi = st.selectbox("Select KPI", merged_df.select_dtypes(include=np.number).columns.tolist())
+    with col2:
+        selected_grouping = st.selectbox("Group By", [
+            "Overall Performance", 
+            "By Platform", 
+            "By Media Buy", 
+            "Platform & Media Buy"
+        ])
+
+    # Visualization section
     st.header("📈 Creative Performance")
-    with st.expander("Advanced Filters"):
-        # Add filter controls here
-        
-    # Display creative content in grid
-    def display_creative_grid(df, title):  # Now properly indented
-        with st.container():
-            st.subheader(title)
+    
+    def display_creative_grid(df, title):
+        with st.expander(title):
             cols = st.columns(3)
             for idx, (_, row) in enumerate(df.iterrows()):
                 with cols[idx % 3]:
@@ -140,34 +184,39 @@ if brandfolder_zip and brandfolder_csv and performance_data:
                             display_image(content, "")
                         elif match_type == "video":
                             st.video(content)
-                        elif match_type == "html_link":
-                            st.markdown(f"[Interactive Creative]({content})", unsafe_allow_html=True)
                         else:
                             st.warning("No preview available")
-                            
                         st.metric(selected_kpi, f"{row[selected_kpi]:.2f}")
 
-    # Display AI Insights in formatted box            
-    def display_insights(insights_text):
-        st.markdown(f"""
-        <div style="
-            padding: 1rem;
-            border-radius: 0.5rem;
-            background: {THEME_CONFIG['secondaryBackgroundColor']};
-            margin: 1rem 0;
-        ">
-            <h4 style='color:{THEME_CONFIG['primaryColor']};'>AI Recommendations</h4>
-            {insights_text}
-        </div>
-        """, unsafe_allow_html=True)
-
-    # Main analysis flow
-    if grouping == "Overall Performance":
+    # Display results based on grouping
+    if selected_grouping == "Overall Performance":
         display_creative_grid(merged_df.nlargest(6, selected_kpi), "Top Performers")
         display_creative_grid(merged_df.nsmallest(6, selected_kpi), "Improvement Opportunities")
-        display_insights(generate_insights(merged_df, selected_kpi))
-    
-    # ... other grouping cases ...
+    else:
+        # Add grouping-specific logic here
+        pass
 
-# Requirements: Create requirements.txt with
-# streamlit anthropic python-dotenv pillow fuzzywumpy pandas openpyxl xlsxwriter
+    # AI Insights
+    st.header("🤖 AI Recommendations")
+    with st.spinner("Generating insights..."):
+        try:
+            insights = client.messages.create(
+                model="claude-3-haiku-20240307",
+                max_tokens=1000,
+                messages=[{
+                    "role": "user",
+                    "content": f"Analyze these top performers ({selected_kpi}): {merged_df.nlargest(3, selected_kpi)['name'].tolist()}"
+                }]
+            ).content[0].text
+            st.markdown(f"""
+            <div style="
+                padding: 1rem;
+                border-radius: 0.5rem;
+                background: {THEME_CONFIG['secondaryBackgroundColor']};
+                margin: 1rem 0;
+            ">
+                {insights}
+            </div>
+            """, unsafe_allow_html=True)
+        except Exception as e:
+            st.error(f"Failed to generate insights: {str(e)}")
