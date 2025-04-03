@@ -29,7 +29,7 @@ THEME_CONFIG = {
     "font": "sans serif"
 }
 
-# Initialize Claude client
+# Initialize Claude client for AI recommendations
 client = Anthropic(api_key=os.getenv('api_key'))
 
 # Streamlit app configuration
@@ -255,4 +255,20 @@ if brandfolder_zip and brandfolder_csv and performance_data:
                                      f"Top Performers - {platform} | {media_buy}")
                 display_creative_group(group_df.nsmallest(2, selected_kpi), 
                                      f"Improvement Opportunities - {platform} | {media_buy}")
-                
+
+# AI Recommendations Section
+st.header("🤖 AI Recommendations")
+with st.spinner("Generating insights..."):
+    try:
+        insights_request_content = (
+            f"Analyze these marketing creatives based on '{selected_kpi}'. "
+            "Identify top 3 characteristics of successful content. Focus on visual elements, messaging,"
+            "and technical specifications. Format as bullet points with emojis."
+        )
+        
+        response_content = client.completion(
+            prompt=insights_request_content,
+            model="claude-v1",
+            max_tokens=300,
+            temperature=0.7,
+         ).completion
