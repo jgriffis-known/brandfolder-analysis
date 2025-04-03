@@ -233,6 +233,24 @@ if brandfolder_zip and brandfolder_csv and performance_data:
                         # Display metric value.
                         st.metric(selected_kpi, f"{row[selected_kpi]:.2f}")
 
-    
+    # Display results based on grouping
     if selected_grouping == "Overall Performance":
-        
+        display_creative_group(merged_df.nlargest(6, selected_kpi), "Top Performers")
+        display_creative_group(merged_df.nsmallest(6, selected_kpi), "Improvement Opportunities")
+    elif selected_grouping == "By Platform":
+        for platform in merged_df['Platform'].unique():
+            platform_df = merged_df[merged_df['Platform'] == platform]
+            display_creative_group(platform_df.nlargest(3, selected_kpi), f"Top Performers on {platform}")
+            display_creative_group(platform_df.nsmallest(3, selected_kpi), f"Improvement Opportunities on {platform}")
+    elif selected_grouping == "By Media Buy":
+        for media_buy in merged_df['Media Buy'].unique():
+            media_buy_df = merged_df[merged_df['Media Buy'] == media_buy]
+            display_creative_group(media_buy_df.nlargest(3, selected_kpi), f"Top Performers in {media_buy}")
+            display_creative_group(media_buy_df.nsmallest(3, selected_kpi), f"Improvement Opportunities in {media_buy}")
+    elif selected_grouping == "Platform & Media Buy":
+        for platform in merged_df['Platform'].unique():
+            for media_buy in merged_df['Media Buy'].unique():
+                filtered_df = merged_df[(merged_df['Platform'] == platform) & (merged_df['Media Buy'] == media_buy)]
+                if not filtered_df.empty:
+                    display_creative_group(filtered_df.nlargest(2, selected_kpi), f"Top Performers on {platform} ({media_buy})")
+                    display_creative_group(filtered_df.nsmallest(2, selected_kpi), f"Improvement Opportunities on {platform} ({media_buy})")
