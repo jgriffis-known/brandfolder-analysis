@@ -36,7 +36,7 @@ client = Anthropic(api_key=os.getenv('api_key'))
 st.set_page_config(page_title="Brandfolder Analytics", layout="wide")
 st.title("🎨 Brandfolder Creative Analysis")
 
-# Custom CSS for styling
+# Custom CSS for styling metrics and layout adjustments
 st.markdown(f"""
     <style>
     .reportview-container .main .block-container{{
@@ -51,8 +51,13 @@ st.markdown(f"""
     video {{
         max-width: {MAX_VIDEO_WIDTH}px !important;
     }}
+    .stMetric {{
+        font-size: 0.8rem !important; /* Smaller font size */
+        overflow-wrap: break-word;   /* Wrap long text */
+        text-align: center;          /* Center-align content */
+    }}
     </style>
-    """, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
 def sanitize_filename(filename):
     """Remove invalid characters from filenames"""
@@ -72,14 +77,12 @@ def display_image(content, caption):
 def handle_video(content, creative_name):
     """Handle video display with proper temp file management"""
     try:
-        # Create temp directory if it doesn't exist
         temp_dir = Path(tempfile.mkdtemp())
         temp_file = temp_dir / f"{sanitize_filename(creative_name)}.mp4"
         
         with open(temp_file, "wb") as f:
             f.write(content)
         
-        # Display video with controlled width
         st.video(str(temp_file), format="video/mp4", start_time=0)
     except Exception as e:
         st.error(f"Error displaying video: {str(e)}")
@@ -135,7 +138,7 @@ def find_closest_matching_creative(creative_name, uploaded_zip):
     """Match creative name to assets with improved error handling"""
     valid_image_ext = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp')
     valid_video_ext = ('.mp4', '.mov', '.webm')
-
+    
     try:
         with zipfile.ZipFile(uploaded_zip) as zip_ref:
             file_list = [sanitize_filename(f) for f in zip_ref.namelist()]
@@ -169,7 +172,7 @@ with st.sidebar:
     performance_data = st.file_uploader("Performance Data XLSX", type=["xlsx"])
 
 if brandfolder_zip and brandfolder_csv and performance_data:
-    # Data processing
+
     @st.cache_data
     def process_data():
         df_brandfolder = pd.read_csv(brandfolder_csv)
@@ -188,14 +191,15 @@ if brandfolder_zip and brandfolder_csv and performance_data:
 
     merged_df = process_data()
     
-    # Convert MOV files first
     brandfolder_zip = convert_mov_to_mp4(brandfolder_zip)
     
-    # Analysis controls
     st.header("📊 Performance Analysis")
+    
     col1, col2 = st.columns(2)
+    
     with col1:
         selected_kpi = st.selectbox("Select KPI", merged_df.select_dtypes(include=np.number).columns.tolist())
+    
     with col2:
         selected_grouping = st.selectbox("Group By", [
             "Overall Performance", 
@@ -204,16 +208,16 @@ if brandfolder_zip and brandfolder_csv and performance_data:
             "Platform & Media Buy"
         ])
 
-    # Visualization section
-    st.header("📈 Creative Performance")
     
     def display_creative_group(df, title):
         with st.expander(title):
             cols = st.columns(3)
+            
             for idx, (_, row) in enumerate(df.iterrows()):
                 with cols[idx % 3]:
                     with st.container():
                         st.caption(f"Creative: {row['name']}")
+                        
                         match_type, content = find_closest_matching_creative(row["name"], brandfolder_zip)
                         
                         if match_type == "image":
@@ -222,40 +226,33 @@ if brandfolder_zip and brandfolder_csv and performance_data:
                             handle_video(content, row["name"])
                         else:
                             st.warning("No preview available")
+                        
+                        # Display metric value.
                         st.metric(selected_kpi, f"{row[selected_kpi]:.2f}")
 
-    # Display results based on grouping
+    
+    # Display results based on grouping logic.
     if selected_grouping == "Overall Performance":
         display_creative_group(merged_df.nlargest(6, selected_kpi), "Top Performers")
         display_creative_group(merged_df.nsmallest(6, selected_kpi), "Improvement Opportunities")
-    else:
-        # Add grouping-specific logic here
-        pass
-
-    # AI Insights
-    st.header("🤖 AI Recommendations")
-    with st.spinner("Generating insights..."):
-        try:
-            insights = client.messages.create(
-                model="claude-3-sonnet-20240229",
-                max_tokens=1000,
-                messages=[{
-                    "role": "user",
-                    "content": f"Analyze these marketing creatives based on {selected_kpi}. Identify top 3 characteristics of successful content. Focus on visual elements, messaging, and technical specifications. Format as bullet points with emojis."
-                }]
-            ).content[0].text
+        
+    elif selected_grouping == "By Platform":
+        for platform in merged_df['Platform'].unique():
+            platform_df = merged_df[merged_df['Platform'] == platform]
+            display_creative_group(platform_df.nlargest(3, selected_kpi), f"Top Performers - {platform}")
+            display_creative_group(platform_df.nsmallest(3, selected_kpi), f"Improvement Opportunities - {platform}")
             
-            st.markdown(f"""
-            <div style="
-                padding: 1.5rem;
-                border-radius: 0.5rem;
-                background: {THEME_CONFIG['secondaryBackgroundColor']};
-                margin: 1rem 0;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            ">
-                <h4 style='color:{THEME_CONFIG['primaryColor']}; margin-top:0;'>🎯 Key Recommendations</h4>
-                {insights}
-            </div>
-            """, unsafe_allow_html=True)
-        except Exception as e:
-            st.error(f"Failed to generate insights: {str(e)}")
+    elif selected_grouping == "By Media Buy":
+        for media_buy in merged_df['Media Buy'].unique():
+            media_buy_df = merged_df[merged_df['Media Buy'] == media_buy]
+            display_creative_group(media_buy_df.nlargest(3, selected_kpi), f"Top Performers - {media_buy}")
+            display_creative_group(media_buy_df.nsmallest(3, selected_kpi), f"Improvement Opportunities - {media_buy}")
+            
+    elif selected_grouping == "Platform & Media Buy":
+        for (platform, media_buy), group_df in merged_df.groupby(['Platform', 'Media Buy']):
+            if not group_df.empty:
+                display_creative_group(group_df.nlargest(2, selected_kpi), 
+                                     f"Top Performers - {platform} | {media_buy}")
+                display_creative_group(group_df.nsmallest(2, selected_kpi), 
+                                     f"Improvement Opportunities - {platform} | {media_buy}")
+                
