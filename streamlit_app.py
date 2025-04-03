@@ -231,30 +231,34 @@ if brandfolder_zip and brandfolder_csv and performance_data:
                         st.metric(selected_kpi, f"{row[selected_kpi]:.2f}")
 
     
-    # Display results based on grouping logic.
-    if selected_grouping == "Overall Performance":
-        display_creative_group(merged_df.nlargest(6, selected_kpi), "Top Performers")
-        display_creative_group(merged_df.nsmallest(6, selected_kpi), "Improvement Opportunities")
-        
-    elif selected_grouping == "By Platform":
-        for platform in merged_df['Platform'].unique():
+  # Display results based on grouping
+if selected_grouping == "Overall Performance":
+    display_creative_group(merged_df.nlargest(6, selected_kpi), "Top Performers")
+    display_creative_group(merged_df.nsmallest(6, selected_kpi), "Improvement Opportunities")
+elif selected_grouping == "By Platform":
+    if 'Platform' in merged_df.columns:
+        for platform in merged_df['Platform'].dropna().unique():
             platform_df = merged_df[merged_df['Platform'] == platform]
             display_creative_group(platform_df.nlargest(3, selected_kpi), f"Top Performers - {platform}")
             display_creative_group(platform_df.nsmallest(3, selected_kpi), f"Improvement Opportunities - {platform}")
-            
-    elif selected_grouping == "By Media Buy":
-        for media_buy in merged_df['Media Buy'].unique():
-            media_buy_df = merged_df[merged_df['Media Buy'] == media_buy]
+    else:
+        st.error("The 'Platform' column is missing from the data.")
+elif selected_grouping == "By Media Buy":
+    if 'Media Buy Name' in merged_df.columns:
+        for media_buy in merged_df['Media Buy Name'].dropna().unique():
+            media_buy_df = merged_df[merged_df['Media Buy Name'] == media_buy]
             display_creative_group(media_buy_df.nlargest(3, selected_kpi), f"Top Performers - {media_buy}")
             display_creative_group(media_buy_df.nsmallest(3, selected_kpi), f"Improvement Opportunities - {media_buy}")
-            
-    elif selected_grouping == "Platform & Media Buy":
-        for (platform, media_buy), group_df in merged_df.groupby(['Platform', 'Media Buy']):
+    else:
+        st.error("The 'Media Buy Name' column is missing from the data.")
+elif selected_grouping == "Platform & Media Buy":
+    if 'Platform' in merged_df.columns and 'Media Buy Name' in merged_df.columns:
+        for (platform, media_buy), group_df in merged_df.groupby(['Platform', 'Media Buy Name']):
             if not group_df.empty:
-                display_creative_group(group_df.nlargest(2, selected_kpi), 
-                                     f"Top Performers - {platform} | {media_buy}")
-                display_creative_group(group_df.nsmallest(2, selected_kpi), 
-                                     f"Improvement Opportunities - {platform} | {media_buy}")
+                display_creative_group(group_df.nlargest(2, selected_kpi), f"Top Performers - {platform} | {media_buy}")
+                display_creative_group(group_df.nsmallest(2, selected_kpi), f"Improvement Opportunities - {platform} | {media_buy}")
+    else:
+        st.error("The 'Platform' or 'Media Buy Name' column is missing from the data.")
 
     # AI Insights
     st.header("🤖 AI Recommendations")
