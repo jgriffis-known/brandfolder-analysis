@@ -3,259 +3,154 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+from anthropic import Anthropic
+from fuzzywuzzy import fuzz
+from PIL import Image
 import zipfile
 import io
 import tempfile
 import subprocess
-import os
-import re
-import shutil
-from pathlib import Path
-from PIL import Image
-from anthropic import Anthropic
-from fuzzywuzzy import fuzz
-from dotenv import load_dotenv
 from io import BytesIO
 
-# Configuration
-load_dotenv()
-MAX_IMAGE_WIDTH = 600
-MAX_VIDEO_WIDTH = 800
-THEME_CONFIG = {
-    "primaryColor": "#4CAF50",
-    "backgroundColor": "#FFFFFF",
-    "secondaryBackgroundColor": "#F0F0F0",
-    "textColor": "#000000",
-    "font": "sans serif"
-}
+# Set up your API key
+import os
+from dotenv import load_dotenv
 
-# Initialize Claude client
-client = Anthropic(api_key=os.getenv('api_key'))
+load_dotenv()  # Load environment variables from .env
+api_key = os.getenv('api_key')
+client = Anthropic(api_key=api_key)
 
-# Streamlit app configuration
-st.set_page_config(page_title="Brandfolder Analytics", layout="wide")
-st.title("🎨 Brandfolder Creative Analysis")
+# Streamlit app title
+st.title("Brandfolder Creative Analysis")
 
-# Custom CSS for styling
-st.markdown(f"""
-    <style>
-    .reportview-container .main .block-container{{
-        max-width: 1200px;
-        padding-top: 2rem;
-        padding-bottom: 2rem;
-    }}
-    .stDownloadButton > button {{
-        background-color: {THEME_CONFIG['primaryColor']};
-        color: white;
-    }}
-    video {{
-        max-width: {MAX_VIDEO_WIDTH}px !important;
-    }}
-    </style>
-    """, unsafe_allow_html=True)
+# File uploaders with instructions
+st.sidebar.header("Upload Files")
 
-def sanitize_filename(filename):
-    """Remove invalid characters from filenames"""
-    return re.sub(r'[\\/*?:"<>|\x00]', "", str(filename))
+st.sidebar.markdown("**Brandfolder Zip**")
+brandfolder_zip = st.sidebar.file_uploader("Upload Brandfolder Zip", type=["zip"])
+st.sidebar.markdown("Select all files you'd like to include in Brandfolder and download as zip")
 
-def display_image(content, caption):
-    """Display image with controlled dimensions"""
-    try:
-        img = Image.open(content)
-        wpercent = (MAX_IMAGE_WIDTH / float(img.size[0]))
-        hsize = int((float(img.size[1]) * float(wpercent)))
-        img = img.resize((MAX_IMAGE_WIDTH, hsize), Image.Resampling.LANCZOS)
-        st.image(img, caption=caption, use_column_width=False)
-    except Exception as e:
-        st.error(f"Error displaying image: {str(e)}")
+st.sidebar.markdown("**Brandfolder CSV**")
+brandfolder_csv = st.sidebar.file_uploader("Upload Brandfolder CSV", type=["csv"])
+st.sidebar.markdown("Select all files you'd like to include in Brandfolder and download as a csv")
 
-def handle_video(content, creative_name):
-    """Handle video display with proper temp file management"""
-    try:
-        # Create temp directory if it doesn't exist
-        temp_dir = Path(tempfile.mkdtemp())
-        temp_file = temp_dir / f"{sanitize_filename(creative_name)}.mp4"
-        
-        with open(temp_file, "wb") as f:
-            f.write(content)
-        
-        # Display video with controlled width
-        st.video(str(temp_file), format="video/mp4", start_time=0)
-    except Exception as e:
-        st.error(f"Error displaying video: {str(e)}")
-
-def convert_mov_to_mp4(zip_file):
-    """Convert .mov files to .mp4 with enhanced error handling"""
-    if not shutil.which('ffmpeg'):
-        st.error("FFmpeg not found! Please install FFmpeg and ensure it's in your PATH.")
-        return zip_file
-
-    try:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            with zipfile.ZipFile(zip_file, 'r') as zip_ref:
-                zip_ref.extractall(temp_dir)
-
-            for root, _, files in os.walk(temp_dir):
-                for file in files:
-                    if file.lower().endswith('.mov'):
-                        mov_path = Path(root) / file
-                        mp4_path = mov_path.with_suffix('.mp4')
-                        
-                        try:
-                            subprocess.run([
-                                'ffmpeg', '-y',
-                                '-i', str(mov_path),
-                                '-c:v', 'libx264',
-                                '-preset', 'fast',
-                                '-crf', '22',
-                                '-c:a', 'aac',
-                                '-b:a', '128k',
-                                '-pix_fmt', 'yuv420p',
-                                str(mp4_path)
-                            ], check=True, capture_output=True)
-                            mov_path.unlink()
-                        except subprocess.CalledProcessError as e:
-                            st.error(f"Error converting {file}: {e.stderr.decode()}")
-
-            mem_zip = BytesIO()
-            with zipfile.ZipFile(mem_zip, 'w', zipfile.ZIP_DEFLATED) as new_zip:
-                for root, _, files in os.walk(temp_dir):
-                    for file in files:
-                        full_path = Path(root) / file
-                        rel_path = full_path.relative_to(temp_dir)
-                        new_zip.write(full_path, rel_path.as_posix())
-            
-            mem_zip.seek(0)
-            return mem_zip
-    except Exception as e:
-        st.error(f"Video conversion error: {str(e)}")
-        return zip_file
-
-def find_closest_matching_creative(creative_name, uploaded_zip):
-    """Match creative name to assets with improved error handling"""
-    valid_image_ext = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp')
-    valid_video_ext = ('.mp4', '.mov', '.webm')
-
-    try:
-        with zipfile.ZipFile(uploaded_zip) as zip_ref:
-            file_list = [sanitize_filename(f) for f in zip_ref.namelist()]
-
-            # Try matching images first
-            image_files = [f for f in file_list if f.lower().endswith(valid_image_ext)]
-            if image_files:
-                best_image = max(image_files, key=lambda f: fuzz.ratio(creative_name.lower(), Path(f).stem.lower()))
-                if fuzz.ratio(creative_name.lower(), Path(best_image).stem.lower()) > 60:
-                    with zip_ref.open(best_image) as f:
-                        return 'image', BytesIO(f.read())
-
-            # Try matching videos
-            video_files = [f for f in file_list if f.lower().endswith(valid_video_ext)]
-            if video_files:
-                best_video = max(video_files, key=lambda f: fuzz.ratio(creative_name.lower(), Path(f).stem.lower()))
-                if fuzz.ratio(creative_name.lower(), Path(best_video).stem.lower()) > 60:
-                    with zip_ref.open(best_video) as f:
-                        return 'video', f.read()
-
-            return None, None
-    except Exception as e:
-        st.error(f"File processing error: {str(e)}")
-        return None, None
-
-# File upload section
-with st.sidebar:
-    st.header("📤 Upload Files")
-    brandfolder_zip = st.file_uploader("Brandfolder Zip", type=["zip"])
-    brandfolder_csv = st.file_uploader("Brandfolder CSV", type=["csv"])
-    performance_data = st.file_uploader("Performance Data XLSX", type=["xlsx"])
+st.sidebar.markdown("**Performance Data XLSX**")
+performance_data = st.sidebar.file_uploader("Upload Performance Data XLSX", type=["xlsx"])
+st.sidebar.markdown("Utilize Pivot Tables in MCI with the following variables: Platforms, Campaign Name, Media Buy (i.e. Audience), Creative Name, Media Cost, Impressions, Clicks, and any other KPI you'd like to use.")
+st.sidebar.markdown("Creative Name must have the brandfolder key in the naming convention.")
 
 if brandfolder_zip and brandfolder_csv and performance_data:
-    # Data processing
+    df_brandfolder = pd.read_csv(brandfolder_csv)
+    df_performance = pd.read_excel(performance_data)
+    
+    # Function to convert currency strings to float
+    def convert_currency_to_float(x):
+        if isinstance(x, str):
+            return float(x.replace('$', '').replace(',', ''))
+        else:
+            return x
+
+    # Apply the conversion function to numeric columns only
+    numeric_columns = ['Media Cost', 'Impressions', 'Clicks']  # Add other numeric columns here
+
+    for col in numeric_columns:
+        if col in df_performance.columns:
+            try:
+                df_performance[col] = df_performance[col].apply(convert_currency_to_float)
+            except ValueError:
+                print(f"Skipping column '{col}' as it cannot be converted to float.")
+    
+    # Extract Brandfolder Key from Creative Name
+    df_performance['Brandfolder Key'] = df_performance['Creative Name'].apply(lambda x: x.split('_')[-1] if pd.notnull(x) else None)
+    
+    # Left join the dataframes
+    merged_df = pd.merge(df_performance, df_brandfolder, left_on='Brandfolder Key', right_on='key', how='inner')
+    
+    st.write("### Merged Data Preview")
+    st.write(merged_df.head())
+    
+    # Provide download link for merged file as XLSX
     @st.cache_data
-    def process_data():
-        df_brandfolder = pd.read_csv(brandfolder_csv)
-        df_performance = pd.read_excel(performance_data)
-        
-        numeric_cols = ['Media Cost', 'Impressions', 'Clicks']
-        for col in numeric_cols:
-            if col in df_performance.columns:
-                try:
-                    df_performance[col] = df_performance[col].replace('[\$,]', '', regex=True).astype(float)
-                except Exception as e:
-                    st.error(f"Error converting {col}: {str(e)}")
-        
-        df_performance['Brandfolder Key'] = df_performance['Creative Name'].str.extract(r'_([^_]+)$')
-        return pd.merge(df_performance, df_brandfolder, left_on='Brandfolder Key', right_on='key', how='inner')
+    def convert_df_to_excel(df):
+        from io import BytesIO
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df.to_excel(writer, index=False, sheet_name='Merged Data')
+        processed_data = output.getvalue()
+        return processed_data
 
-    merged_df = process_data()
-    
-    # Convert MOV files first
-    brandfolder_zip = convert_mov_to_mp4(brandfolder_zip)
-    
-    # Analysis controls
-    st.header("📊 Performance Analysis")
-    col1, col2 = st.columns(2)
-    with col1:
-        selected_kpi = st.selectbox("Select KPI", merged_df.select_dtypes(include=np.number).columns.tolist())
-    with col2:
-        selected_grouping = st.selectbox("Group By", [
-            "Overall Performance", 
-            "By Platform", 
-            "By Media Buy", 
-            "Platform & Media Buy"
-        ])
+    excel_data = convert_df_to_excel(merged_df)
+    st.download_button("Download Merged XLSX", excel_data, "merged_file.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-    # Visualization section
-    st.header("📈 Creative Performance")
-    
-    def display_creative_group(df, title):
-        with st.expander(title):
-            cols = st.columns(3)
-            for idx, (_, row) in enumerate(df.iterrows()):
-                with cols[idx % 3]:
-                    with st.container():
-                        st.caption(f"Creative: {row['name']}")
-                        match_type, content = find_closest_matching_creative(row["name"], brandfolder_zip)
-                        
-                        if match_type == "image":
-                            display_image(content, "")
-                        elif match_type == "video":
-                            handle_video(content, row["name"])
-                        else:
-                            st.warning("No preview available")
-                        st.metric(selected_kpi, f"{row[selected_kpi]:.2f}")
+    # Extract numeric columns from df_performance
+    numeric_columns = df_performance.select_dtypes(include=['number']).columns.tolist()
 
-    # Display results based on grouping
-    if selected_grouping == "Overall Performance":
-        display_creative_group(merged_df.nlargest(6, selected_kpi), "Top Performers")
-        display_creative_group(merged_df.nsmallest(6, selected_kpi), "Improvement Opportunities")
-    else:
-        # Add grouping-specific logic here
-        pass
+    # Create a dropdown for selecting a numeric KPI
+    st.write("### Select a KPI to Analyze")
+    selected_kpi = st.selectbox("Select a KPI", numeric_columns)
 
-    # AI Insights
-    st.header("🤖 AI Recommendations")
-    with st.spinner("Generating insights..."):
+    # Create a dropdown for selecting grouping method
+    st.write("### Select Performance Grouping")
+    grouping_options = [
+        "Aggregate (All Data)", 
+        "Group by Platforms", 
+        "Group by Media Buy Name", 
+        "Group by Platforms and Media Buy Name"
+    ]
+    selected_grouping = st.selectbox("Select how to group the performance data", grouping_options)
+
+    # Function to match creative name to image or video or animated GIFs
+    def find_closest_matching_creative(creative_name, uploaded_zip):
+        valid_image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp')
+        valid_video_extensions = ('.mp4', '.mov', '.webm')
+
         try:
-            insights = client.messages.create(
-                model="claude-3-sonnet-20240229",
-                max_tokens=1000,
-                messages=[{
-                    "role": "user",
-                    "content": f"Analyze these marketing creatives based on {selected_kpi}. Identify top 3 characteristics of successful content. Focus on visual elements, messaging, and technical specifications. Format as bullet points with emojis."
-                }]
-            ).content[0].text
-            
-            st.markdown(f"""
-            <div style="
-                padding: 1.5rem;
-                border-radius: 0.5rem;
-                background: {THEME_CONFIG['secondaryBackgroundColor']};
-                margin: 1rem 0;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            ">
-                <h4 style='color:{THEME_CONFIG['primaryColor']}; margin-top:0;'>🎯 Key Recommendations</h4>
-                {insights}
-            </div>
-            """, unsafe_allow_html=True)
+            with zipfile.ZipFile(uploaded_zip) as outer_zip:
+                file_list = outer_zip.namelist()
+
+                # Match images or videos
+                for file in file_list:
+                    if 'animated' in file.lower() and file.lower().endswith(valid_image_extensions):
+                        return 'animated_link', file  # Return link for animated GIFs
+                    
+                    if fuzz.ratio(creative_name.lower(), file.lower()) > 60:
+                        if file.lower().endswith(valid_image_extensions):
+                            with outer_zip.open(file) as img_file:
+                                return 'image', Image.open(io.BytesIO(img_file.read()))
+                        elif file.lower().endswith(valid_video_extensions):
+                            with outer_zip.open(file) as video_file:
+                                return 'video', video_file.read()
+
+                return None, None
+
         except Exception as e:
-            st.error(f"Failed to generate insights: {str(e)}")
+            print(f"Zip handling error: {e}")
+            return None, None
+    
+    # Function to display performance for a group
+    def display_performance(df, group_name=""):
+        if df.empty or selected_kpi not in df.columns or df[selected_kpi].isna().all():
+            st.write(f"**{group_name}**")
+            st.write("No valid data available for this group.")
+            return
+        
+        grouped_by_creative = df.groupby('Creative Name')
+        
+        for creative_name, creative_data in grouped_by_creative:
+            match_type, content_or_link = find_closest_matching_creative(creative_name, brandfolder_zip)
+            
+            if match_type == 'image':
+                st.image(content_or_link, caption=creative_name, width=300)  # Limit width of static images
+            
+            elif match_type == 'animated_link':
+                st.markdown(f"[View Animated GIF: {creative_name}]({content_or_link})")
+            
+            elif match_type == 'video':
+                st.video(content_or_link)
+            
+            else:
+                st.warning(f"No preview available for {creative_name}.")
+    
+    # Display performance based on selected grouping
+    if selected_grouping == "Aggregate (All Data)":
+        display_performance(merged_df, "All Data")
