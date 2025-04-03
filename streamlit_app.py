@@ -256,19 +256,31 @@ if brandfolder_zip and brandfolder_csv and performance_data:
                 display_creative_group(group_df.nsmallest(2, selected_kpi), 
                                      f"Improvement Opportunities - {platform} | {media_buy}")
 
-# AI Recommendations Section
-st.header("🤖 AI Recommendations")
-with st.spinner("Generating insights..."):
-    try:
-        insights_request_content = (
-            f"Analyze these marketing creatives based on '{selected_kpi}'. "
-            "Identify top 3 characteristics of successful content. Focus on visual elements, messaging,"
-            "and technical specifications. Format as bullet points with emojis."
-        )
-        
-        response_content = client.completion(
-            prompt=insights_request_content,
-            model="claude-v1",
-            max_tokens=300,
-            temperature=0.7,
-         ).completion
+    # AI Insights
+    st.header("🤖 AI Recommendations")
+    with st.spinner("Generating insights..."):
+        try:
+            insights = client.messages.create(
+                model="claude-3-sonnet-20240229",
+                max_tokens=1000,
+                messages=[{
+                    "role": "user",
+                    "content": f"Analyze these marketing creatives based on {selected_kpi}. Identify top 3 characteristics of successful content. Focus on visual elements, messaging, and technical specifications. Format as bullet points with emojis."
+                }]
+            ).content[0].text
+            
+            st.markdown(f"""
+            <div style="
+                padding: 1.5rem;
+                border-radius: 0.5rem;
+                background: {THEME_CONFIG['secondaryBackgroundColor']};
+                margin: 1rem 0;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            ">
+                <h4 style='color:{THEME_CONFIG['primaryColor']}; margin-top:0;'>🎯 Key Recommendations</h4>
+                {insights}
+            </div>
+            """, unsafe_allow_html=True)
+            
+        except Exception as e:  # <-- This was missing
+            st.error(f"Failed to generate insights: {str(e)}")
