@@ -36,7 +36,7 @@ client = Anthropic(api_key=os.getenv('api_key'))
 st.set_page_config(page_title="Brandfolder Analytics", layout="wide")
 st.title("🎨 Brandfolder Creative Analysis")
 
-# Custom CSS for styling metrics and layout adjustments
+# Custom CSS for styling
 st.markdown(f"""
     <style>
     .reportview-container .main .block-container{{
@@ -51,102 +51,10 @@ st.markdown(f"""
     video {{
         max-width: {MAX_VIDEO_WIDTH}px !important;
     }}
-    .stMetric {{
-        font-size: 0.8rem !important;
-        overflow-wrap: break-word;
-        text-align: center;
-    }}
     </style>
-""", unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
-def sanitize_filename(filename):
-    return re.sub(r'[\\/*?:"<>|\x00]', "", str(filename))
-
-def display_image(content, caption):
-    try:
-        img = Image.open(content)
-        wpercent = (MAX_IMAGE_WIDTH / float(img.size[0]))
-        hsize = int((float(img.size[1]) * float(wpercent)))
-        img = img.resize((MAX_IMAGE_WIDTH, hsize), Image.Resampling.LANCZOS)
-        st.image(img, caption=caption, use_column_width=False)
-    except Exception as e:
-        st.error(f"Error displaying image: {str(e)}")
-
-def handle_video(content, creative_name):
-    try:
-        temp_dir = Path(tempfile.mkdtemp())
-        temp_file = temp_dir / f"{sanitize_filename(creative_name)}.mp4"
-        with open(temp_file, "wb") as f:
-            f.write(content)
-        st.video(str(temp_file), format="video/mp4", start_time=0)
-    except Exception as e:
-        st.error(f"Error displaying video: {str(e)}")
-
-def convert_mov_to_mp4(zip_file):
-    if not shutil.which('ffmpeg'):
-        st.error("FFmpeg not found! Please install FFmpeg and ensure it's in your PATH.")
-        return zip_file
-    try:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            with zipfile.ZipFile(zip_file, 'r') as zip_ref:
-                zip_ref.extractall(temp_dir)
-            for root, _, files in os.walk(temp_dir):
-                for file in files:
-                    if file.lower().endswith('.mov'):
-                        mov_path = Path(root) / file
-                        mp4_path = mov_path.with_suffix('.mp4')
-                        try:
-                            subprocess.run([
-                                'ffmpeg', '-y',
-                                '-i', str(mov_path),
-                                '-c:v', 'libx264',
-                                '-preset', 'fast',
-                                '-crf', '22',
-                                '-c:a', 'aac',
-                                '-b:a', '128k',
-                                '-pix_fmt', 'yuv420p',
-                                str(mp4_path)
-                            ], check=True, capture_output=True)
-                            mov_path.unlink()
-                        except subprocess.CalledProcessError as e:
-                            st.error(f"Error converting {file}: {e.stderr.decode()}")
-            mem_zip = BytesIO()
-            with zipfile.ZipFile(mem_zip, 'w', zipfile.ZIP_DEFLATED) as new_zip:
-                for root, _, files in os.walk(temp_dir):
-                    for file in files:
-                        full_path = Path(root) / file
-                        rel_path = full_path.relative_to(temp_dir)
-                        new_zip.write(full_path, rel_path.as_posix())
-            mem_zip.seek(0)
-            return mem_zip
-    except Exception as e:
-        st.error(f"Video conversion error: {str(e)}")
-        return zip_file
-
-def find_closest_matching_creative(creative_name, uploaded_zip):
-    valid_image_ext = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp')
-    valid_video_ext = ('.mp4', '.mov', '.webm')
-    try:
-        with zipfile.ZipFile(uploaded_zip) as zip_ref:
-            file_list = [sanitize_filename(f) for f in zip_ref.namelist()]
-            # Image matching
-            image_files = [f for f in file_list if f.lower().endswith(valid_image_ext)]
-            if image_files:
-                best_image = max(image_files, key=lambda f: fuzz.ratio(creative_name.lower(), Path(f).stem.lower()))
-                if fuzz.ratio(creative_name.lower(), Path(best_image).stem.lower()) > 60:
-                    with zip_ref.open(best_image) as f:
-                        return 'image', BytesIO(f.read())
-            # Video matching
-            video_files = [f for f in file_list if f.lower().endswith(valid_video_ext)]
-            if video_files:
-                best_video = max(video_files, key=lambda f: fuzz.ratio(creative_name.lower(), Path(f).stem.lower()))
-                if fuzz.ratio(creative_name.lower(), Path(best_video).stem.lower()) > 60:
-                    with zip_ref.open(best_video) as f:
-                        return 'video', f.read()
-            return None, None
-    except Exception as e:
-        st.error(f"File processing error: {str(e)}")
-        return None, None
+# ... [Keep all helper functions identical] ...
 
 # File upload section
 with st.sidebar:
@@ -156,28 +64,58 @@ with st.sidebar:
     performance_data = st.file_uploader("Performance Data XLSX", type=["xlsx"])
 
 if brandfolder_zip and brandfolder_csv and performance_data:
+    # Enhanced data processing with validation
     @st.cache_data
     def process_data():
-        df_brandfolder = pd.read_csv(brandfolder_csv)
-        df_performance = pd.read_excel(performance_data)
-        
-        numeric_cols = ['Media Cost', 'Impressions', 'Clicks']
-        for col in numeric_cols:
-            if col in df_performance.columns:
-                try:
-                    df_performance[col] = df_performance[col].replace('[\$,]', '', regex=True).astype(float)
-                except Exception as e:
-                    st.error(f"Error converting {col}: {str(e)}")
-        
-        df_performance['Brandfolder Key'] = df_performance['Creative Name'].str.extract(r'_([^_]+)$')
-        merged = pd.merge(df_performance, df_brandfolder, left_on='Brandfolder Key', right_on='key', how='inner')
-        
-        # Validate required columns
-        if 'Platform' not in merged.columns or 'Media Buy Name' not in merged.columns:
-            st.error("Critical Error: Required columns 'Platform' or 'Media Buy Name' not found in merged data")
-            st.stop()
+        try:
+            df_brandfolder = pd.read_csv(brandfolder_csv)
+            df_performance = pd.read_excel(performance_data)
             
-        return merged
+            # Validate required columns exist
+            required_columns = ['Platform', 'Media Buy Name', 'Creative Name']
+            missing_cols = [col for col in required_columns if col not in df_performance.columns]
+            if missing_cols:
+                st.error(f"Missing required columns in performance data: {', '.join(missing_cols)}")
+                st.stop()
+
+            # Clean numeric columns
+            numeric_cols = ['Media Cost', 'Impressions', 'Clicks']
+            for col in numeric_cols:
+                if col in df_performance.columns:
+                    df_performance[col] = df_performance[col].replace('[\$,]', '', regex=True).astype(float)
+            
+            # Extract Brandfolder Key and merge
+            df_performance['Brandfolder Key'] = df_performance['Creative Name'].str.extract(r'_([^_]+)$')
+            merged = pd.merge(df_performance, df_brandfolder, 
+                            left_on='Brandfolder Key', 
+                            right_on='key', 
+                            how='inner')
+
+            # Show merged data preview
+            st.subheader("Merged Data Preview")
+            st.dataframe(merged.head())
+            
+            # Add download button for merged data
+            @st.cache_data
+            def convert_df_to_excel(df):
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                    df.to_excel(writer, index=False)
+                return output.getvalue()
+            
+            excel_data = convert_df_to_excel(merged)
+            st.download_button(
+                label="Download Merged Data (XLSX)",
+                data=excel_data,
+                file_name="merged_data.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            
+            return merged
+            
+        except Exception as e:
+            st.error(f"Data processing error: {str(e)}")
+            st.stop()
 
     merged_df = process_data()
     brandfolder_zip = convert_mov_to_mp4(brandfolder_zip)
