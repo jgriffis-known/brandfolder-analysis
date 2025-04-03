@@ -37,26 +37,36 @@ st.set_page_config(page_title="Brandfolder Analytics", layout="wide")
 st.title("🎨 Brandfolder Creative Analysis")
 
 # Custom CSS for styling metrics and layout adjustments
-st.markdown(f"""
+st.markdown("""
     <style>
-    .reportview-container .main .block-container{{
-        max-width: 1200px;
-        padding-top: 2rem;
-        padding-bottom: 2rem;
-    }}
-    .stDownloadButton > button {{
-        background-color: {THEME_CONFIG['primaryColor']};
-        color: white;
-    }}
-    video {{
-        max-width: {MAX_VIDEO_WIDTH}px !important;
-    }}
-    .stMetric {{
-        font-size: 0.9rem !important; /* Adjust font size for metrics */
-        overflow-wrap: break-word;   /* Ensure long numbers wrap */
-    }}
+    /* Adjust font size for metrics */
+    .stMetric {
+        font-size: 0.8rem !important; /* Reduce font size */
+        overflow-wrap: break-word;   /* Ensure long text wraps */
+        text-align: center;          /* Center-align content */
+    }
+    
+    /* Ensure grid columns are responsive */
+    .stColumns {
+        display: flex;
+        flex-wrap: wrap;             /* Allow wrapping of columns */
+        gap: 1rem;                   /* Add spacing between columns */
+    }
+    
+    /* Adjust column width for smaller screens */
+    @media (max-width: 768px) {
+        .stColumns > div {
+            flex: 1 1 calc(50% - 1rem); /* Two columns on smaller screens */
+        }
+    }
+    
+    @media (max-width: 480px) {
+        .stColumns > div {
+            flex: 1 1 calc(100% - 1rem); /* One column on very small screens */
+        }
+    }
     </style>
-    """, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
 def sanitize_filename(filename):
     """Remove invalid characters from filenames"""
