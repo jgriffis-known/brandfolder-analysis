@@ -104,32 +104,40 @@ def convert_mov_to_mp4(zip_file):
         return mem_zip
 
 def find_closest_matching_creative(creative_name, uploaded_zip):
-    """Match creative name to assets in ZIP file"""
-    valid_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.mp4', '.mov', '.webm')
-    
+    valid_image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp')
+    valid_video_extensions = ('.mp4', '.mov', '.webm')
+
     try:
-        with zipfile.ZipFile(uploaded_zip) as zip_ref:
-            file_list = zip_ref.namelist()
-            best_match = None
-            best_score = 0
+        with zipfile.ZipFile(uploaded_zip) as outer_zip:
+            file_list = outer_zip.namelist()
 
-            for file in file_list:
-                if file.lower().endswith(valid_extensions):
-                    score = fuzz.ratio(creative_name.lower(), os.path.basename(file).lower())
-                    if score > best_score:
-                        best_match = file
-                        best_score = score
+            # 1. Try to match images
+            image_files = [f for f in file_list if f.lower().endswith(valid_image_extensions)]
+            if image_files:
+                best_image_match = max(image_files, key=lambda f: fuzz.ratio(creative_name.lower(), os.path.basename(f).lower()))
+                best_image_score = fuzz.ratio(creative_name.lower(), os.path.basename(best_image_match).lower())
 
-            if best_score > 60:
-                with zip_ref.open(best_match) as file:
-                    content = file.read()
-                    if best_match.lower().endswith(('.mp4', '.mov', '.webm')):
-                        return 'video', content
-                    else:
-                        return 'image', Image.open(io.BytesIO(content))
+                if best_image_score > 60:
+                    with outer_zip.open(best_image_match) as img_file:
+                        try:
+                            return 'image', img_file.read()  # Return raw bytes instead of a Pillow object
+                        except Exception as e:
+                            print(f"Error loading image '{best_image_match}': {e}")
+
+            # 2. Try to match video files
+            video_files = [f for f in file_list if f.lower().endswith(valid_video_extensions)]
+            if video_files:
+                best_video_match = max(video_files, key=lambda f: fuzz.ratio(creative_name.lower(), os.path.basename(f).lower()))
+                best_video_score = fuzz.ratio(creative_name.lower(), os.path.basename(best_video_match).lower())
+
+                if best_video_score > 60:
+                    with outer_zip.open(best_video_match) as video_file:
+                        return 'video', video_file.read()
+
             return None, None
+
     except Exception as e:
-        st.error(f"Error processing ZIP file: {str(e)}")
+        print(f"Zip handling error: {e}")
         return None, None
 
 # Main app logic
