@@ -163,8 +163,8 @@ def find_closest_matching_creative(creative_name, uploaded_zip):
     except Exception as e:
         st.error(f"File processing error: {str(e)}")
         return None, None
-
-# File upload section
+    
+    # File upload section
 with st.sidebar:
     st.header("📤 Upload Files")
     brandfolder_zip = st.file_uploader("Brandfolder Zip", type=["zip"])
@@ -187,78 +187,52 @@ if brandfolder_zip and brandfolder_csv and performance_data:
                     st.error(f"Error converting {col}: {str(e)}")
         
         df_performance['Brandfolder Key'] = df_performance['Creative Name'].str.extract(r'_([^_]+)$')
+        
+        # Ensure Platform and Media Buy columns exist directly from input files.
         return pd.merge(df_performance, df_brandfolder, left_on='Brandfolder Key', right_on='key', how='inner')
 
+    
     merged_df = process_data()
     
+    # Convert MOV files first
     brandfolder_zip = convert_mov_to_mp4(brandfolder_zip)
-    
-    st.header("📊 Performance Analysis")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        selected_kpi = st.selectbox("Select KPI", merged_df.select_dtypes(include=np.number).columns.tolist())
-    
-    with col2:
-        selected_grouping = st.selectbox("Group By", [
-            "Overall Performance", 
-            "By Platform", 
-            "By Media Buy", 
-            "Platform & Media Buy"
-        ])
 
+    # Display results based on grouping
+    if selected_grouping == "Overall Performance":
+        display_creative_group(merged_df.nlargest(6, selected_kpi), "Top Performers")
+        display_creative_group(merged_df.nsmallest(6, selected_kpi), "Improvement Opportunities")
     
-    def display_creative_group(df, title):
-        with st.expander(title):
-            cols = st.columns(3)
-            
-            for idx, (_, row) in enumerate(df.iterrows()):
-                with cols[idx % 3]:
-                    with st.container():
-                        st.caption(f"Creative: {row['name']}")
-                        
-                        match_type, content = find_closest_matching_creative(row["name"], brandfolder_zip)
-                        
-                        if match_type == "image":
-                            display_image(content, "")
-                        elif match_type == "video":
-                            handle_video(content, row["name"])
-                        else:
-                            st.warning("No preview available")
-                        
-                        # Display metric value.
-                        st.metric(selected_kpi, f"{row[selected_kpi]:.2f}")
+    elif selected_grouping == "By Platform":
+        if 'Platform' not in merged_df.columns:
+            st.error("Error: 'Platform' column not found in merged data")
+        else:
+            for platform in merged_df['Platform'].unique():
+                platform_df = merged_df[merged_df['Platform'] == platform]
+                display_creative_group(platform_df.nlargest(3, selected_kpi), f"Top Performers - {platform}")
+                display_creative_group(platform_df.nsmallest(3, selected_kpi), f"Improvement Opportunities - {platform}")
+    
+    elif selected_grouping == "By Media Buy":
+        if 'Media Buy Name' not in merged_df.columns:
+            st.error("Error: 'Media Buy Name' column not found in merged data")
+        else:
+            for media_buy in merged_df['Media Buy Name'].unique():
+                media_buy_df = merged_df[merged_df['Media Buy Name'] == media_buy]
+                display_creative_group(media_buy_df.nlargest(3, selected_kpi), f"Top Performers - {media_buy}")
+                display_creative_group(media_buy_df.nsmallest(3, selected_kpi), f"Improvement Opportunities - {media_buy}")
+    
+    elif selected_grouping == "Platform & Media Buy":
+        if 'Platform' not in merged_df.columns or 'Media Buy Name' not in merged_df.columns:
+            st.error("Error: Required columns (Platform/Media Buy Name) not found")
+        else:
+            grouped = merged_df.groupby(['Platform', 'Media Buy Name'])
+            for (platform, media_buy), group_df in grouped:
+                if not group_df.empty:
+                    display_creative_group(group_df.nlargest(2, selected_kpi), 
+                                         f"Top Performers - {platform} | {media_buy}")
+                    display_creative_group(group_df.nsmallest(2, selected_kpi), 
+                                         f"Improvement Opportunities - {platform} | {media_buy}")
+                    
 
-    
-  # Display results based on grouping
-if selected_grouping == "Overall Performance":
-    display_creative_group(merged_df.nlargest(6, selected_kpi), "Top Performers")
-    display_creative_group(merged_df.nsmallest(6, selected_kpi), "Improvement Opportunities")
-elif selected_grouping == "By Platform":
-    if 'Platform' in merged_df.columns:
-        for platform in merged_df['Platform'].dropna().unique():
-            platform_df = merged_df[merged_df['Platform'] == platform]
-            display_creative_group(platform_df.nlargest(3, selected_kpi), f"Top Performers - {platform}")
-            display_creative_group(platform_df.nsmallest(3, selected_kpi), f"Improvement Opportunities - {platform}")
-    else:
-        st.error("The 'Platform' column is missing from the data.")
-elif selected_grouping == "By Media Buy":
-    if 'Media Buy Name' in merged_df.columns:
-        for media_buy in merged_df['Media Buy Name'].dropna().unique():
-            media_buy_df = merged_df[merged_df['Media Buy Name'] == media_buy]
-            display_creative_group(media_buy_df.nlargest(3, selected_kpi), f"Top Performers - {media_buy}")
-            display_creative_group(media_buy_df.nsmallest(3, selected_kpi), f"Improvement Opportunities - {media_buy}")
-    else:
-        st.error("The 'Media Buy Name' column is missing from the data.")
-elif selected_grouping == "Platform & Media Buy":
-    if 'Platform' in merged_df.columns and 'Media Buy Name' in merged_df.columns:
-        for (platform, media_buy), group_df in merged_df.groupby(['Platform', 'Media Buy Name']):
-            if not group_df.empty:
-                display_creative_group(group_df.nlargest(2, selected_kpi), f"Top Performers - {platform} | {media_buy}")
-                display_creative_group(group_df.nsmallest(2, selected_kpi), f"Improvement Opportunities - {platform} | {media_buy}")
-    else:
-        st.error("The 'Platform' or 'Media Buy Name' column is missing from the data.")
 
     # AI Insights
     st.header("🤖 AI Recommendations")
@@ -269,7 +243,10 @@ elif selected_grouping == "Platform & Media Buy":
                 max_tokens=1000,
                 messages=[{
                     "role": "user",
-                    "content": f"Analyze these marketing creatives based on {selected_kpi}. Identify top 3 characteristics of successful content. Focus on visual elements, messaging, and technical specifications. Format as bullet points with emojis."
+                    "content": f"Analyze these {len(merged_df)} creatives based on {selected_kpi}. " +
+                               "Identify top 3 success factors and 3 improvement opportunities. " +
+                               "Focus on visual elements, messaging, and technical specs. " +
+                               "Format with emojis and bullet points."
                 }]
             ).content[0].text
             
@@ -286,5 +263,7 @@ elif selected_grouping == "Platform & Media Buy":
             </div>
             """, unsafe_allow_html=True)
             
-        except Exception as e:  # <-- This was missing
+        except Exception as e:
             st.error(f"Failed to generate insights: {str(e)}")
+
+# Ensure all code is properly indented under the main conditional block
